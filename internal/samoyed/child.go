@@ -93,8 +93,11 @@ func Args(m config.Modem) []string {
 		if m.Inner == config.ModeGFSK9600 {
 			out = append(out, "-B", "9600", "-g")
 		}
+		// strong (default-ish) → -I 1, weak → -I 0. samoyed's IL2P
+		// codec doesn't implement the trailing-CRC variant; this is
+		// FEC strength only, despite the original `crc:` field name.
 		il2p := "0"
-		if m.CRC != nil && *m.CRC {
+		if m.FEC == config.FECStrong {
 			il2p = "1"
 		}
 		out = append(out, "-I", il2p)

@@ -83,7 +83,7 @@ nodes:
 	}
 }
 
-func TestIL2PRequiresInnerAndCRC(t *testing.T) {
+func TestIL2PRequiresInnerAndFEC(t *testing.T) {
 	yaml := `
 nodes:
   - id: a
@@ -93,8 +93,38 @@ nodes:
         kiss_port: 8001
 `
 	_, err := Parse(strings.NewReader(yaml))
+	if err == nil || !strings.Contains(err.Error(), "fec") {
+		t.Fatalf("expected fec error, got %v", err)
+	}
+}
+
+func TestIL2PRejectsBadFEC(t *testing.T) {
+	yaml := `
+nodes:
+  - id: a
+    ports:
+      - id: vhf
+        modem: { mode: il2p, inner: afsk1200, fec: medium }
+        kiss_port: 8001
+`
+	_, err := Parse(strings.NewReader(yaml))
+	if err == nil || !strings.Contains(err.Error(), "fec=") {
+		t.Fatalf("expected fec value error, got %v", err)
+	}
+}
+
+func TestIL2PRejectsLegacyCRC(t *testing.T) {
+	yaml := `
+nodes:
+  - id: a
+    ports:
+      - id: vhf
+        modem: { mode: il2p, inner: afsk1200, crc: true }
+        kiss_port: 8001
+`
+	_, err := Parse(strings.NewReader(yaml))
 	if err == nil || !strings.Contains(err.Error(), "crc") {
-		t.Fatalf("expected crc error, got %v", err)
+		t.Fatalf("expected unknown-field error mentioning crc, got %v", err)
 	}
 }
 

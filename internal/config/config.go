@@ -34,13 +34,28 @@ type Modem struct {
 	Mode Mode `yaml:"mode"`
 
 	// IL2P only.
-	Inner Mode  `yaml:"inner,omitempty"`
-	CRC   *bool `yaml:"crc,omitempty"`
+	//
+	// FEC is the Reed-Solomon strength: "strong" → samoyed `-I 1` (the
+	// recommended value), "weak" → `-I 0`. This used to be `crc: bool`
+	// but that name was misleading — samoyed's IL2P codec doesn't
+	// implement the optional 2-byte trailing CRC variant ("IL2P+CRC" /
+	// "IL2Pc") at all, only the FEC strength toggle. See README's
+	// "Known limitations".
+	Inner Mode `yaml:"inner,omitempty"`
+	FEC   FEC  `yaml:"fec,omitempty"`
 
 	// BPSK only.
 	Baud      int `yaml:"baud,omitempty"`
 	CarrierHz int `yaml:"carrier_hz,omitempty"`
 }
+
+// FEC selects the IL2P FEC strength.
+type FEC string
+
+const (
+	FECStrong FEC = "strong"
+	FECWeak   FEC = "weak"
+)
 
 // Equivalent reports whether two modem configs describe the same on-the-air
 // signal. Both ends of a link must be Equivalent or the link is invalid.
@@ -50,17 +65,7 @@ func (m Modem) Equivalent(o Modem) bool {
 	}
 	switch m.Mode {
 	case ModeIL2P:
-		if m.Inner != o.Inner {
-			return false
-		}
-		mc, oc := false, false
-		if m.CRC != nil {
-			mc = *m.CRC
-		}
-		if o.CRC != nil {
-			oc = *o.CRC
-		}
-		return mc == oc
+		return m.Inner == o.Inner && m.FEC == o.FEC
 	case ModeBPSK:
 		return m.Baud == o.Baud && m.CarrierHz == o.CarrierHz
 	}
@@ -298,11 +303,11 @@ func parsePortRef(s string) (PortRef, error) {
 func validateModem(m Modem) error {
 	switch m.Mode {
 	case ModeAFSK1200:
-		if m.Inner != "" || m.CRC != nil || m.Baud != 0 || m.CarrierHz != 0 {
+		if m.Inner != "" || m.FEC != "" || m.Baud != 0 || m.CarrierHz != 0 {
 			return errors.New("afsk1200 takes no extra params")
 		}
 	case ModeGFSK9600:
-		if m.Inner != "" || m.CRC != nil || m.Baud != 0 || m.CarrierHz != 0 {
+		if m.Inner != "" || m.FEC != "" || m.Baud != 0 || m.CarrierHz != 0 {
 			return errors.New("gfsk9600 takes no extra params")
 		}
 	case ModeIL2P:
@@ -312,17 +317,21 @@ func validateModem(m Modem) error {
 		if m.Inner != ModeAFSK1200 && m.Inner != ModeGFSK9600 {
 			return fmt.Errorf("il2p inner=%q not supported", m.Inner)
 		}
-		if m.CRC == nil {
-			return errors.New("il2p requires crc (true|false)")
+		switch m.FEC {
+		case FECStrong, FECWeak:
+		case "":
+			return errors.New("il2p requires fec (strong|weak)")
+		default:
+			return fmt.Errorf("il2p fec=%q (must be strong|weak)", m.FEC)
 		}
 		if m.Baud != 0 || m.CarrierHz != 0 {
-			return errors.New("il2p takes only inner and crc")
+			return errors.New("il2p takes only inner and fec")
 		}
 	case ModeBPSK:
 		if m.Baud == 0 {
 			return errors.New("bpsk requires baud")
 		}
-		if m.Inner != "" || m.CRC != nil {
+		if m.Inner != "" || m.FEC != "" {
 			return errors.New("bpsk takes baud and optional carrier_hz")
 		}
 	case "":

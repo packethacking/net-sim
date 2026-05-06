@@ -238,7 +238,7 @@ when you meant `baud`) is an error at startup, not a silent default.
 | `afsk1200` | none | ✅ supported. Default workhorse. |
 | `gfsk9600` | none | ✅ supported. Auto-selected for 9600 baud + G3RUH. |
 | `bpsk` | `baud`, optional `carrier_hz` | ❌ not yet — refused at startup. |
-| `il2p` | `inner` (afsk1200 / gfsk9600), `crc` (bool) | ✅ supported. |
+| `il2p` | `inner` (afsk1200 / gfsk9600), `fec` (`strong`/`weak`) | ✅ supported (FEC strength only — see Known limitations). |
 
 Modes the YAML accepts but samoyed can't actually run *fail at startup
 with a clear error*. Adding a new mode is config plumbing — see the
@@ -272,6 +272,29 @@ for each rx block per receiving port:
 
 This is what makes the `hidden-node` and `hidden-node-capture` demos do
 qualitatively different things from the same code.
+
+## Known limitations (samoyed-side, expected to be fixed upstream)
+
+These are gaps in the current samoyed build that affect what you can
+test against; both will likely land in samoyed soon and we'll bump the
+pin then. Tracker issues:
+[net-sim#1](https://github.com/packethacking/net-sim/issues/1) /
+[net-sim#2](https://github.com/packethacking/net-sim/issues/2).
+
+- **No IL2P+CRC (a.k.a. IL2Pc) support.** Samoyed implements the IL2P
+  v0.6 base form — header + payload, Reed-Solomon FEC, no trailing 2-byte
+  CRC. The `fec` field on `il2p` modems toggles RS strength (`strong` →
+  `-I 1`, `weak` → `-I 0`); it does *not* enable the spec's optional
+  trailing-CRC variant. If your application requires IL2Pc on the wire,
+  this rig won't reproduce it yet. (The field used to be called `crc`,
+  which was misleading — renamed to `fec` to match what it actually
+  does.)
+- **No KISS ACKMODE.** Samoyed's KISS layer explicitly refuses XKISS
+  opcodes (`12 = ACKMODE data`, `14 = poll`) — sending one logs
+  `Using ACKMODE will cause this error.` and the frame is dropped.
+  Anything that depends on tracked-frame ACKs from the TNC (some BPQ
+  configurations, certain `ax25d` setups) won't work against simulated
+  ports. Use NORMAL KISS only.
 
 ## What's not in v1
 

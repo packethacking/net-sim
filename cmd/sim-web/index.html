@@ -127,7 +127,7 @@ The router moves audio between ports through an FM capture-effect mixer
 <tr><th>mode</th><th>params</th><th>status</th></tr>
 <tr><td><code>afsk1200</code></td><td>—</td><td>supported</td></tr>
 <tr><td><code>gfsk9600</code></td><td>—</td><td>supported</td></tr>
-<tr><td><code>il2p</code></td><td><code>inner</code> (afsk1200 / gfsk9600), <code>crc</code> (bool)</td><td>supported</td></tr>
+<tr><td><code>il2p</code></td><td><code>inner</code> (afsk1200 / gfsk9600), <code>fec</code> (strong / weak)</td><td>supported (FEC strength only — see Known limitations on the README)</td></tr>
 <tr><td><code>bpsk</code></td><td><code>baud</code>, optional <code>carrier_hz</code></td><td>not yet — refused at startup</td></tr>
 </table>
 
@@ -450,7 +450,7 @@ function renderPort(node, ni, port, pi) {
   if (port.modem.mode === "il2p") {
     body.appendChild(mkRow(
       field("Inner", select(IL2P_INNER, port.modem.inner || "afsk1200", v => port.modem.inner = v)),
-      field("CRC",   checkbox(port.modem.crc === true, v => port.modem.crc = v)),
+      field("FEC",   select(["strong","weak"], port.modem.fec || "strong", v => port.modem.fec = v)),
     ));
   } else if (port.modem.mode === "bpsk") {
     body.appendChild(mkRow(
@@ -600,7 +600,7 @@ function defaultModem(mode) {
   switch (mode) {
     case "afsk1200": return { mode };
     case "gfsk9600": return { mode };
-    case "il2p":     return { mode, inner: "afsk1200", crc: true };
+    case "il2p":     return { mode, inner: "afsk1200", fec: "strong" };
     case "bpsk":     return { mode, baud: 1200, carrier_hz: 1500 };
     default:         return { mode };
   }

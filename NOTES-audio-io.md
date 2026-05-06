@@ -224,12 +224,19 @@ This becomes the source of truth for `internal/samoyedcmd` (Phase 2):
 afsk1200:   conf "MODEM 1200"           (no extra CLI)
 gfsk9600:   CLI  "-B 9600 -g"
 il2p:
-  inner=afsk1200, crc=true:  conf "MODEM 1200" + CLI "-I 1"
-  inner=afsk1200, crc=false: conf "MODEM 1200" + CLI "-I 0"
-  inner=gfsk9600, crc=true:  CLI "-B 9600 -g -I 1"
-  inner=gfsk9600, crc=false: CLI "-B 9600 -g -I 0"
+  inner=afsk1200, fec=strong:  conf "MODEM 1200" + CLI "-I 1"
+  inner=afsk1200, fec=weak:    conf "MODEM 1200" + CLI "-I 0"
+  inner=gfsk9600, fec=strong:  CLI "-B 9600 -g -I 1"
+  inner=gfsk9600, fec=weak:    CLI "-B 9600 -g -I 0"
 bpsk:       refuse — not supported by current samoyed
 ```
+
+samoyed's `-I {0,1}` controls Reed-Solomon parity-byte count, *not* the
+optional 2-byte trailing CRC defined by the IL2P spec — that variant
+("IL2P+CRC" / "IL2Pc") is not implemented in samoyed at all (verified
+in `src/il2p_send.go` and `src/il2p_codec.go`: the encode path only
+takes `max_fec`). `fec` was named `crc` originally; renamed because the
+old name implied a feature samoyed doesn't have.
 
 ## Open issues to file upstream (don't fix here)
 
