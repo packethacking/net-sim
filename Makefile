@@ -1,0 +1,97 @@
+# /opt/sim/Makefile — sim-router and the demo topologies.
+#
+# Common workflow:
+#   make build         # compile the Go router and the LD_PRELOAD shim
+#   make test          # go vet + go test ./...
+#   make demo-hidden-node          # see Phase 3 capture-effect baseline
+#   make demo-hidden-node-capture  # capture-effect, asymmetric levels
+#   make demo-mesh-3 / demo-linear-6 / demo-star-6 / demo-multiport-3
+#
+# By default the binary searches /opt/samoyed/dist for samoyed-direwolf
+# and /usr/local/lib for libpa_stub.so. Override with -samoyed / -pa-stub.
+
+GO        ?= go
+GOFLAGS   ?=
+PRELOAD   := /usr/local/lib/libpa_stub.so
+PRELOAD_C := preload/pa_stub.c
+
+.PHONY: build test fmt vet clean preload \
+        demo-hidden-node demo-hidden-node-capture demo-mesh-3 \
+        demo-linear-6 demo-star-6 demo-multiport-3 demo-two-node \
+        demo-two-node-noisy
+
+build: sim-router preload
+
+sim-router: $(shell find . -name '*.go' -not -path './testdata/*')
+	$(GO) build $(GOFLAGS) -o $@ ./cmd/sim-router
+
+preload: $(PRELOAD)
+
+$(PRELOAD): $(PRELOAD_C)
+	@if [ ! -w $$(dirname $(PRELOAD)) ]; then \
+		echo "$(PRELOAD) is not writable; rerun as root or build with sudo"; exit 1; \
+	fi
+	gcc -shared -fPIC -o $(PRELOAD) $(PRELOAD_C)
+
+test: vet
+	$(GO) test ./...
+
+vet:
+	$(GO) vet ./...
+
+fmt:
+	$(GO) fmt ./...
+
+clean:
+	rm -f sim-router
+
+# --- demos ----------------------------------------------------------------
+# Each demo target is a thin wrapper. `make demo-<name>` runs the router
+# with the matching config from configs/. Send/receive KISS via the ports
+# noted in the per-demo summary printed at startup.
+
+define DEMO_RUN
+	@echo "=== $@ ===" ; \
+	echo "Config: configs/$(1).yaml" ; \
+	echo "Stop with Ctrl-C." ; \
+	./sim-router -config configs/$(1).yaml
+endef
+
+demo-two-node: build
+	$(call DEMO_RUN,two-node)
+
+demo-two-node-noisy: build
+	$(call DEMO_RUN,two-node-noisy)
+
+demo-hidden-node: build
+	@echo "Hidden-node, equal levels (PLAN Phase 3 acceptance):"
+	@echo "  KISS A=8001  KISS B=8002  KISS C=8003"
+	@echo "  Send to A and C simultaneously; B should fail to decode either."
+	$(call DEMO_RUN,hidden-node)
+
+demo-hidden-node-capture: build
+	@echo "Hidden-node, A captures over C:"
+	@echo "  KISS A=8001  KISS B=8002  KISS C=8003"
+	@echo "  Send to A and C simultaneously; B should decode A only."
+	$(call DEMO_RUN,hidden-node-capture)
+
+demo-mesh-3: build
+	@echo "Three-node mesh, AFSK1200, equal-loss everywhere:"
+	@echo "  KISS A=8001  KISS B=8002  KISS C=8003"
+	$(call DEMO_RUN,mesh-3)
+
+demo-linear-6: build
+	@echo "Linear 6-station chain (each hears only neighbours):"
+	@echo "  KISS A..F = 8001..8006"
+	$(call DEMO_RUN,linear-6)
+
+demo-star-6: build
+	@echo "Star: 1 hub + 5 spokes:"
+	@echo "  KISS hub=8001  spokes=8002..8006"
+	$(call DEMO_RUN,star-6)
+
+demo-multiport-3: build
+	@echo "Multi-port: middle node has VHF (8002) AND UHF (8003);"
+	@echo "  a (8001) reaches middle via VHF, b (8004) via UHF."
+	@echo "  middle's two ports do not interact (different radios)."
+	$(call DEMO_RUN,multiport-3)

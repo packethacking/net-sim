@@ -1,0 +1,25 @@
+# Star topology: hub plus 5 spoke stations. Hub hears all spokes, spokes
+# hear only the hub. Useful for digipeater / bulletin-board setups.
+mixer_mode: fm_capture
+capture_db: 6.0
+collision_mode: silence
+
+nodes:
+  - { id: hub, callsign: HUB,   ports: [{ id: vhf, modem: { mode: afsk1200 }, kiss_port: 8001 }] }
+  - { id: s1,  callsign: SIM1,  ports: [{ id: vhf, modem: { mode: afsk1200 }, kiss_port: 8002 }] }
+  - { id: s2,  callsign: SIM2,  ports: [{ id: vhf, modem: { mode: afsk1200 }, kiss_port: 8003 }] }
+  - { id: s3,  callsign: SIM3,  ports: [{ id: vhf, modem: { mode: afsk1200 }, kiss_port: 8004 }] }
+  - { id: s4,  callsign: SIM4,  ports: [{ id: vhf, modem: { mode: afsk1200 }, kiss_port: 8005 }] }
+  - { id: s5,  callsign: SIM5,  ports: [{ id: vhf, modem: { mode: afsk1200 }, kiss_port: 8006 }] }
+
+links:
+  - { from: hub.vhf, to: s1.vhf, loss_db: 0 }
+  - { from: s1.vhf, to: hub.vhf, loss_db: 0 }
+  - { from: hub.vhf, to: s2.vhf, loss_db: 0 }
+  - { from: s2.vhf, to: hub.vhf, loss_db: 0 }
+  - { from: hub.vhf, to: s3.vhf, loss_db: 0 }
+  - { from: s3.vhf, to: hub.vhf, loss_db: 0 }
+  - { from: hub.vhf, to: s4.vhf, loss_db: 0 }
+  - { from: s4.vhf, to: hub.vhf, loss_db: 0 }
+  - { from: hub.vhf, to: s5.vhf, loss_db: 0 }
+  - { from: s5.vhf, to: hub.vhf, loss_db: 0 }
