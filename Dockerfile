@@ -23,7 +23,9 @@
 # Tags: :main, :main-<sha>, :v<x.y.z>, :latest (on tagged release)
 
 # ---- builder ------------------------------------------------------------
-FROM golang:1.22-bookworm AS builder
+# samoyed's go.mod requires Go ≥ 1.25 (as of mid-2025). Bump in lockstep
+# with samoyed's minimum.
+FROM golang:1.25-bookworm AS builder
 
 ARG SAMOYED_REF=main
 

@@ -103,6 +103,10 @@ func main() {
 	mux.HandleFunc("/", app.handleIndex)
 	mux.HandleFunc("/api/config", app.handleConfig)
 	mux.HandleFunc("/api/topology", app.handleTopology)
+	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("ok\n"))
+	})
 	mux.HandleFunc("/api/start", app.handleStart)
 	mux.HandleFunc("/api/stop", app.handleStop)
 	mux.HandleFunc("/api/restart", app.handleRestart)

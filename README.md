@@ -77,10 +77,17 @@ Tags published:
 
 Embedding in another project's tests (e.g. as a fixture for your AX.25
 client / BPQ-style router): mount your network YAML, expose the KISS
-ports your test connects to, then poll `GET /api/status` until
-`running:true` to know the topology is up. The router doesn't auto-
-start by default — issue `POST /api/start` (or set `-autostart` in
-your `docker run`'s args) once the YAML is in place.
+ports your test connects to, and use the two probe endpoints —
+
+- `GET /healthz` → `200 ok` once the HTTP server is accepting connections
+  (use as a readiness probe).
+- `GET /api/status` → JSON; check `running:true` to confirm the router
+  brought all the samoyed children up.
+
+The default Docker `CMD` is `-autostart`, so `running:true` is the
+expected steady state right after startup. Override (`docker run ...
+ghcr.io/.../net-sim:main` with extra args) if you'd rather drive
+Start/Stop manually from your test harness via `POST /api/start`.
 
 ## Quick install (curl | sudo bash)
 
