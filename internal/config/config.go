@@ -8,6 +8,7 @@
 package config
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"io"
@@ -128,6 +129,12 @@ func Load(path string) (*Config, error) {
 	}
 	defer f.Close()
 	return Parse(f)
+}
+
+// ParseBytes is a convenience over Parse for in-memory config bytes
+// (used by sim-web when validating an edited config before saving).
+func ParseBytes(b []byte) (*Config, error) {
+	return Parse(bytes.NewReader(b))
 }
 
 // Parse reads YAML from r with strict decoding (unknown fields are errors)

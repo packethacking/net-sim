@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>net-sim</title>
+<style>
+  body { font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+         background: #0e0f12; color: #d6d6d6; margin: 0; padding: 1rem 1.5rem;
+         font-size: 14px; line-height: 1.4; }
+  h1 { font-size: 1rem; margin: 0 0 .5rem 0; color: #e8e8e8; }
+  h1 small { font-weight: normal; color: #888; }
+  .row { display: flex; gap: 1rem; margin: .75rem 0; align-items: center; flex-wrap: wrap; }
+  button { background: #2a2d33; color: #e8e8e8; border: 1px solid #3c3f47;
+           padding: .35rem .8rem; cursor: pointer; font: inherit; border-radius: 3px; }
+  button:hover { background: #353941; }
+  button.primary { background: #2c5282; border-color: #3c6ca6; }
+  button.primary:hover { background: #366ba8; }
+  button.danger { background: #6b2c2c; border-color: #8e3a3a; }
+  button.danger:hover { background: #7e3535; }
+  textarea { width: 100%; min-height: 60vh; background: #16181d; color: #d6d6d6;
+             border: 1px solid #2c2f36; padding: .5rem; font: inherit;
+             box-sizing: border-box; resize: vertical; tab-size: 2; }
+  .pill { display: inline-block; padding: .15rem .5rem; border-radius: 999px;
+          background: #2a2d33; border: 1px solid #3c3f47; }
+  .pill.running { background: #1e3924; border-color: #2e5b3a; color: #b6e2bf; }
+  .pill.stopped { background: #3a2a2a; border-color: #5b3a3a; color: #e2b6b6; }
+  .err { color: #ffb3b3; white-space: pre-wrap; margin: .5rem 0; }
+  .ok  { color: #b6e2bf; }
+  .ports { display: grid; grid-template-columns: auto auto auto auto; gap: .25rem 1.25rem;
+           margin-top: .25rem; }
+  .ports div { padding: .1rem 0; }
+  .ports .h { color: #888; font-weight: bold; border-bottom: 1px solid #2c2f36; }
+  small.muted { color: #888; }
+  a { color: #6da4d6; }
+</style>
+</head>
+<body>
+<h1>net-sim &nbsp; <small>{{.ConfigPath}}</small></h1>
+
+<div class="row">
+  <span id="state" class="pill stopped">stopped</span>
+  <button class="primary" onclick="apiStart()">Start</button>
+  <button onclick="apiRestart()">Apply &amp; restart</button>
+  <button class="danger" onclick="apiStop()">Stop</button>
+  <button onclick="reloadConfig()">Revert edits</button>
+  <button onclick="saveConfig()">Save</button>
+</div>
+
+<div id="msg"></div>
+
+<div id="ports"></div>
+
+<textarea id="cfg" spellcheck="false"></textarea>
+<small class="muted">
+Strict YAML — unknown keys are errors. Each port's <code>kiss_port</code> is the TCP port your AX.25 app connects to.
+</small>
+
+<script>
+const $ = id => document.getElementById(id);
+const cfgEl = $('cfg');
+
+function setMsg(text, ok) {
+  const m = $('msg');
+  m.className = ok ? 'ok' : 'err';
+  m.textContent = text || '';
+}
+
+async function reloadConfig() {
+  const r = await fetch('/api/config');
+  cfgEl.value = await r.text();
+  setMsg('config reloaded from disk', true);
+}
+
+async function saveConfig() {
+  const r = await fetch('/api/config', { method: 'PUT', body: cfgEl.value });
+  if (r.ok) setMsg('saved (router not restarted — click "Apply & restart")', true);
+  else setMsg('save failed: ' + (await r.text()), false);
+  refreshStatus();
+}
+
+async function apiStart()   { await act('/api/start'); }
+async function apiStop()    { await act('/api/stop');  }
+async function apiRestart() { await saveConfig(); await act('/api/restart'); }
+
+async function act(path) {
+  const r = await fetch(path, { method: 'POST' });
+  if (!r.ok) {
+    setMsg(path + ': ' + (await r.text()), false);
+  } else {
+    setMsg(path + ' ok', true);
+  }
+  refreshStatus();
+}
+
+async function refreshStatus() {
+  const r = await fetch('/api/status');
+  const s = await r.json();
+  const stEl = $('state');
+  stEl.textContent = s.running ? 'running' : 'stopped';
+  stEl.className = 'pill ' + (s.running ? 'running' : 'stopped');
+
+  const ports = $('ports');
+  ports.innerHTML = '';
+  if (s.running && s.ports && s.ports.length) {
+    const grid = document.createElement('div');
+    grid.className = 'ports';
+    grid.innerHTML = '<div class=h>node</div><div class=h>port</div><div class=h>mode</div><div class=h>kiss tcp</div>';
+    for (const p of s.ports) {
+      grid.innerHTML += `<div>${p.node}</div><div>${p.port}</div><div>${p.mode}</div><div>${p.kiss_port}</div>`;
+    }
+    ports.appendChild(grid);
+  }
+  if (s.last_error) setMsg(s.last_error, false);
+}
+
+reloadConfig();
+refreshStatus();
+setInterval(refreshStatus, 2000);
+</script>
+</body>
+</html>

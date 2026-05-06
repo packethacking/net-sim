@@ -1,4 +1,4 @@
-module github.com/M0LTE/net-sim
+module github.com/packethacking/net-sim
 
 go 1.22
 
