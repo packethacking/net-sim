@@ -62,8 +62,9 @@ func main() {
 	addr := flag.String("addr", ":8080", "HTTP listen address")
 	cfgPath := flag.String("config", "network.yaml", "path to the network YAML")
 	samoyed := flag.String("samoyed", "", "samoyed-direwolf binary (default: discover)")
+	direwolf := flag.String("direwolf", "", "direwolf binary (default: discover)")
 	preload := flag.String("pa-stub", "", "libpa_stub.so for LD_PRELOAD (default: discover)")
-	workDir := flag.String("workdir", "", "scratch dir for per-port direwolf.conf (default: temp)")
+	workDir := flag.String("workdir", "", "scratch dir for per-port config files / FIFOs (default: temp)")
 	autostart := flag.Bool("autostart", false, "start the router immediately on launch")
 	flag.Parse()
 
@@ -75,9 +76,13 @@ func main() {
 		os.Exit(1)
 	}
 
-	bin, err := resolveBinary(*samoyed)
-	if err != nil {
-		logger.Warn("samoyed-direwolf not found at startup; you'll need it before you can Start", "err", err)
+	samoyedBin, _ := resolveSamoyed(*samoyed)
+	direwolfBin, _ := resolveDirewolf(*direwolf)
+	if samoyedBin == "" {
+		logger.Warn("samoyed-direwolf not found; ports with tnc=samoyed (default) won't start")
+	}
+	if direwolfBin == "" {
+		logger.Warn("direwolf not found; ports with tnc=direwolf won't start")
 	}
 	stub, err := resolvePreload(*preload)
 	if err != nil {
@@ -85,11 +90,12 @@ func main() {
 	}
 
 	app := &app{
-		cfgPath:    *cfgPath,
-		binaryPath: bin,
-		preload:    stub,
-		workDir:    *workDir,
-		logger:     logger,
+		cfgPath:     *cfgPath,
+		samoyedBin:  samoyedBin,
+		direwolfBin: direwolfBin,
+		preload:     stub,
+		workDir:     *workDir,
+		logger:      logger,
 	}
 
 	tmpl, err := template.ParseFS(assets, "index.html")
@@ -143,12 +149,13 @@ func main() {
 }
 
 type app struct {
-	cfgPath    string
-	binaryPath string
-	preload    string
-	workDir    string
-	logger     *slog.Logger
-	tmpl       *template.Template
+	cfgPath     string
+	samoyedBin  string
+	direwolfBin string
+	preload     string
+	workDir     string
+	logger      *slog.Logger
+	tmpl        *template.Template
 
 	mu       sync.Mutex
 	router   *router.Router
@@ -364,14 +371,15 @@ func (a *app) start() error {
 	if a.router != nil {
 		return errors.New("already running")
 	}
-	if a.binaryPath == "" {
-		bin, err := resolveBinary("")
-		if err != nil {
-			a.lastErr = err.Error()
-			a.lastTime = time.Now()
-			return err
+	if a.samoyedBin == "" {
+		if bin, err := resolveSamoyed(""); err == nil {
+			a.samoyedBin = bin
 		}
-		a.binaryPath = bin
+	}
+	if a.direwolfBin == "" {
+		if bin, err := resolveDirewolf(""); err == nil {
+			a.direwolfBin = bin
+		}
 	}
 	if a.preload == "" {
 		stub, err := resolvePreload("")
@@ -391,7 +399,8 @@ func (a *app) start() error {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	r, err := router.Start(ctx, cfg, router.Options{
-		BinaryPath:  a.binaryPath,
+		SamoyedBin:  a.samoyedBin,
+		DirewolfBin: a.direwolfBin,
 		PreloadPath: a.preload,
 		WorkDir:     a.workDir,
 		Logger:      a.logger,
@@ -432,7 +441,7 @@ func bootstrapConfig(path string) error {
 	return os.WriteFile(path, []byte(defaultConfigYAML), 0o644)
 }
 
-func resolveBinary(explicit string) (string, error) {
+func resolveSamoyed(explicit string) (string, error) {
 	if explicit != "" {
 		if _, err := os.Stat(explicit); err != nil {
 			return "", err
@@ -451,6 +460,24 @@ func resolveBinary(explicit string) (string, error) {
 		}
 	}
 	return "", errors.New("samoyed-direwolf not found in $PATH or common locations")
+}
+
+func resolveDirewolf(explicit string) (string, error) {
+	if explicit != "" {
+		if _, err := os.Stat(explicit); err != nil {
+			return "", err
+		}
+		return explicit, nil
+	}
+	if p, err := exec.LookPath("direwolf"); err == nil {
+		return p, nil
+	}
+	for _, p := range []string{"/usr/bin/direwolf", "/usr/local/bin/direwolf"} {
+		if _, err := os.Stat(p); err == nil {
+			return p, nil
+		}
+	}
+	return "", errors.New("direwolf not found in $PATH or common locations")
 }
 
 func resolvePreload(explicit string) (string, error) {

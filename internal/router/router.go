@@ -27,6 +27,7 @@ package router
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -36,14 +37,15 @@ import (
 
 	"github.com/packethacking/net-sim/internal/audio"
 	"github.com/packethacking/net-sim/internal/config"
-	"github.com/packethacking/net-sim/internal/samoyed"
+	"github.com/packethacking/net-sim/internal/tnc"
 )
 
 // Options configures a Router. All paths default to "look up on $PATH".
 type Options struct {
-	BinaryPath          string // path to samoyed-direwolf
+	SamoyedBin          string // path to samoyed-direwolf
+	DirewolfBin         string // path to direwolf
 	PreloadPath         string // path to libpa_stub.so
-	WorkDir             string // where temporary direwolf.conf files go
+	WorkDir             string // where temporary config files / FIFOs go
 	Verbose             bool   // log every routing decision
 	Logger              *slog.Logger
 	StartingRxAudioPort int // first ephemeral UDP port for samoyed-→-router audio
@@ -57,7 +59,7 @@ type Router struct {
 	logger *slog.Logger
 
 	mu       sync.RWMutex
-	children map[config.PortRef]*samoyed.Child
+	children map[config.PortRef]*tnc.Child
 
 	// linkQueues hold per-link audio: when source S transmits, blocks are
 	// pushed into linkQueues[S][index] for every link S→D. The destination
@@ -137,7 +139,7 @@ func Start(ctx context.Context, cfg *config.Config, opts Options) (*Router, erro
 
 	for _, n := range cfg.Nodes {
 		for _, p := range n.Ports {
-			if err := samoyed.SupportedMode(p.Modem); err != nil {
+			if err := tnc.SupportedMode(p.Modem); err != nil {
 				return nil, fmt.Errorf("%s.%s: %w", n.ID, p.ID, err)
 			}
 		}
@@ -149,7 +151,7 @@ func Start(ctx context.Context, cfg *config.Config, opts Options) (*Router, erro
 		cfg:        cfg,
 		mixer:      audio.NewMixer(cfg.CaptureDB, cfg.MixerMode == config.MixerLinearSum, string(cfg.CollisionMode)),
 		logger:     opts.Logger,
-		children:   map[config.PortRef]*samoyed.Child{},
+		children:   map[config.PortRef]*tnc.Child{},
 		linkQueues: map[config.PortRef][]*linkQueue{},
 		rxLinks:    map[config.PortRef][]*linkQueue{},
 		cancel:     cancel,
@@ -167,29 +169,43 @@ func Start(ctx context.Context, cfg *config.Config, opts Options) (*Router, erro
 	for _, n := range cfg.Nodes {
 		for _, p := range n.Ports {
 			ref := config.PortRef{NodeID: n.ID, PortID: p.ID}
-			spec := samoyed.Spec{
+			backend := tnc.Backend(p.TNC)
+			if backend == "" {
+				backend = tnc.BackendSamoyed
+			}
+			spec := tnc.Spec{
+				Backend:        backend,
 				NodeID:         n.ID,
 				PortID:         p.ID,
 				Modem:          p.Modem,
 				KissPort:       p.KissPort,
 				RxAudioUDPPort: udpPort,
-				BinaryPath:     opts.BinaryPath,
+				SamoyedBin:     opts.SamoyedBin,
+				DirewolfBin:    opts.DirewolfBin,
 				PreloadPath:    opts.PreloadPath,
 				WorkDir:        opts.WorkDir,
 			}
+			// direwolf doesn't use the per-port UDP port. Reserve it
+			// anyway so subsequent samoyed ports get the next one
+			// regardless of preceding direwolf ports — keeps the UDP
+			// port assignment stable as the topology is edited.
 			udpPort++
 
-			child, err := samoyed.Start(rctx, spec)
+			child, err := tnc.Start(rctx, spec)
 			if err != nil {
 				_ = r.shutdown()
 				return nil, fmt.Errorf("start %s: %w", ref, err)
 			}
 			r.children[ref] = child
 
-			r.logger.Info("port up",
-				"node", n.ID, "port", p.ID,
+			fields := []any{
+				"node", n.ID, "port", p.ID, "tnc", string(backend),
 				"mode", p.Modem.Mode, "kiss_tcp", p.KissPort,
-				"rx_audio_udp", spec.RxAudioUDPPort)
+			}
+			if backend == tnc.BackendSamoyed {
+				fields = append(fields, "rx_audio_udp", spec.RxAudioUDPPort)
+			}
+			r.logger.Info("port up", fields...)
 		}
 	}
 
@@ -243,34 +259,35 @@ func (r *Router) Wait() {
 	r.wg.Wait()
 }
 
-// txReader pulls TX-side audio from this port's samoyed via UDP and fans
-// each block out to every linked destination's per-link queue.
+// txReader pulls TX-side PCM bytes from this port's TNC and fans
+// each BlockBytes-sized chunk out to every linked destination's queue.
 //
-// samoyed bursts TX audio (no real-time pacing on its end), so we must
+// TNCs burst TX audio (no real-time pacing on their end), so we must
 // preserve the order and quantity of blocks rather than collapsing to
-// "latest block" — otherwise the receiver hears just a fragment of the
-// transmission.
-func (r *Router) txReader(ctx context.Context, ref config.PortRef, c *samoyed.Child) {
-	udp := c.UDPConn()
+// "latest block" — otherwise the receiver hears only a fragment of the
+// transmission. Source is io.Reader regardless of backend (samoyed
+// UDP datagrams stitched into a byte stream, or direwolf FIFO bytes).
+//
+// The loop exits when src.Read returns an error — typically because
+// Stop() closed the underlying socket / file at shutdown.
+func (r *Router) txReader(ctx context.Context, ref config.PortRef, c *tnc.Child) {
+	src := c.TXAudio()
 	buf := make([]byte, 4096)
 	pending := make([]byte, 0, audio.BlockBytes*4)
 	outgoing := r.linkQueues[ref] // empty slice if this port has no outgoing links
 
 	for {
-		_ = udp.SetReadDeadline(time.Now().Add(250 * time.Millisecond))
-		n, _, err := udp.ReadFromUDP(buf)
+		n, err := src.Read(buf)
 		if err != nil {
-			if ne, ok := err.(net.Error); ok && ne.Timeout() {
-				if ctx.Err() != nil {
-					return
-				}
-				continue
-			}
-			if ctx.Err() != nil {
+			// EOF / closed-during-shutdown is the normal exit path.
+			if ctx.Err() != nil || errors.Is(err, io.EOF) || errors.Is(err, net.ErrClosed) {
 				return
 			}
-			r.logger.Debug("udp read error", "port", ref, "err", err)
+			r.logger.Debug("tx audio read error", "port", ref, "err", err)
 			return
+		}
+		if n == 0 {
+			continue
 		}
 		pending = append(pending, buf[:n]...)
 		for len(pending) >= audio.BlockBytes {

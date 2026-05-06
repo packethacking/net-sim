@@ -55,6 +55,7 @@ FROM debian:bookworm-slim AS runtime
 RUN apt-get update && apt-get install -y --no-install-recommends \
         libportaudio2 libhamlib4 libudev1 libavahi-client3 \
         libbsd0 libgps28 libasound2 libjack-jackd2-0 libpulse0 \
+        direwolf \
         ca-certificates \
     && rm -rf /var/lib/apt/lists/* /var/cache/apt/* /var/log/*
 

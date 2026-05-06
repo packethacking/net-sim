@@ -72,12 +72,27 @@ func (m Modem) Equivalent(o Modem) bool {
 	return true
 }
 
-// Port is one TNC+radio combination — one samoyed child process.
+// Port is one TNC+radio combination — one TNC child process.
 type Port struct {
 	ID       string `yaml:"id"`
 	Modem    Modem  `yaml:"modem"`
 	KissPort int    `yaml:"kiss_port"`
+
+	// TNC selects the TNC backend that runs this port.
+	// "samoyed" (default) or "direwolf". Both backends speak the same
+	// modem flags; they differ in how the router gets TX audio out
+	// (samoyed → UDP, direwolf → ALSA file-plugin into a FIFO,
+	// because stock Dire Wolf still has no UDP audio out).
+	TNC TNCBackend `yaml:"tnc,omitempty"`
 }
+
+// TNCBackend names the TNC implementation.
+type TNCBackend string
+
+const (
+	TNCSamoyed  TNCBackend = "samoyed"
+	TNCDirewolf TNCBackend = "direwolf"
+)
 
 // Node is a logical station — one or more ports under one identity.
 //
@@ -243,6 +258,11 @@ func (c *Config) Validate() error {
 
 			if err := validateModem(p.Modem); err != nil {
 				return fmt.Errorf("config: %s.%s modem: %w", n.ID, p.ID, err)
+			}
+			switch p.TNC {
+			case "", TNCSamoyed, TNCDirewolf:
+			default:
+				return fmt.Errorf("config: %s.%s: unknown tnc %q (must be samoyed|direwolf)", n.ID, p.ID, p.TNC)
 			}
 			portMap[PortRef{n.ID, p.ID}] = slot{ni, pi}
 		}

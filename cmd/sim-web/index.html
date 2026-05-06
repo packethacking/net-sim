@@ -122,6 +122,19 @@ The router moves audio between ports through an FM capture-effect mixer
 </ul>
 <p>Both tabs read and write the same file: <code>{{.ConfigPath}}</code>.</p>
 
+<h3>TNC backend</h3>
+<p>Each port runs its own TNC child process. Two backends are supported:</p>
+<ul>
+  <li><b>samoyed</b> (default) — a Go port of Dire Wolf. Audio reaches the
+      router via UDP datagrams, which is direct and clean.</li>
+  <li><b>direwolf</b> — stock Dire Wolf 1.8. No UDP audio output yet, so
+      we tunnel TX audio through ALSA's <code>file</code> plugin into a
+      named pipe per port. Same modem flags as samoyed.</li>
+</ul>
+<p>Mixed configs (some ports samoyed, some direwolf) are fine — the
+on-air signal is identical for both, link compatibility is decided by
+modem only.</p>
+
 <h3>Modem catalogue</h3>
 <table>
 <tr><th>mode</th><th>params</th><th>status</th></tr>
@@ -438,6 +451,9 @@ function renderPort(node, ni, port, pi) {
         if (l.to   === old) l.to   = fresh;
       }
       title.textContent = "Port " + (v || "?") + "  (" + port.modem.mode + ")";
+    })),
+    field("TNC", select(["samoyed","direwolf"], port.tnc || "samoyed", v => {
+      port.tnc = v;
     })),
     field("Modem", select(MODES, port.modem.mode, v => {
       port.modem = defaultModem(v);

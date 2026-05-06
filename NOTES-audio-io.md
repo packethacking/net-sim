@@ -15,6 +15,23 @@ loop:
 | Audio in (RX from peer) | UDP listen | `ADEVICE udp:<port> <out>` |
 | Audio out (TX to peer) | UDP datagrams | `ADEVICE <in> udp:<host>:<port>` |
 
+**Stock Dire Wolf 1.8.1 has stdin input but *no* UDP output yet** — it
+falls through to ALSA when handed `udp:host:port`. For ports with
+`tnc: direwolf`, the router instead writes a per-port `.asoundrc` that
+defines an ALSA `file` plugin pointing at a FIFO, and points
+`ADEVICE - <name>` at it. Direwolf writes raw PCM to the FIFO; the
+router reads the FIFO. Loops audio in userspace just fine, but it's a
+workaround we'll happily delete once Dire Wolf supports `udp:` output.
+
+```
+pcm.dwout {
+  type file
+  slave.pcm null
+  file "<workdir>/dw-<node>-<port>/tx.fifo"
+  format raw
+}
+```
+
 These are inherited from Dire Wolf. The router is going to use **stdin in /
 UDP out** for every samoyed instance. Picked stdin over UDP for input because
 backpressure is well-defined (kernel pipe buffer flow controls the router) and

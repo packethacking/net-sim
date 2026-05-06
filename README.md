@@ -231,6 +231,31 @@ links:
 Strict parsing: any unknown key inside a `modem:` block (e.g. `baud_rate`
 when you meant `baud`) is an error at startup, not a silent default.
 
+### TNC backend per port
+
+Each port chooses which TNC implementation runs the modem:
+
+```yaml
+ports:
+  - id: vhf
+    tnc: samoyed        # default
+    modem: { mode: afsk1200 }
+    kiss_port: 8001
+  - id: uhf
+    tnc: direwolf       # stock direwolf 1.8 from apt
+    modem: { mode: afsk1200 }
+    kiss_port: 8002
+```
+
+| `tnc` | Audio TX path | Notes |
+|---|---|---|
+| `samoyed` (default) | UDP datagrams | Clean and direct. Needs the LD_PRELOAD shim against PortAudio init. |
+| `direwolf` | ALSA `file` plugin → named pipe | Workaround until upstream Dire Wolf gains UDP audio out. The router writes a per-port `.asoundrc` and a FIFO into `WorkDir`. |
+
+Both backends accept the same modem flags (`-B 9600 -g`, `-I 1`, etc.),
+so a mixed-TNC config works fine — link compatibility is decided by
+modem alone, not by which TNC is on either end.
+
 ### Modem catalogue
 
 | `mode` | Required params | Status (current samoyed) |

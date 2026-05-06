@@ -27,8 +27,9 @@ func main() {
 	cfgPath := flag.String("config", "", "path to YAML topology file (required)")
 	verbose := flag.Bool("v", false, "verbose / debug logging")
 	samoyedPath := flag.String("samoyed", "", "path to samoyed-direwolf (default: search $PATH and common install paths)")
+	direwolfPath := flag.String("direwolf", "", "path to direwolf (default: search $PATH)")
 	preloadPath := flag.String("pa-stub", "", "path to libpa_stub.so for LD_PRELOAD (default: search common install paths)")
-	workDir := flag.String("workdir", "", "scratch dir for per-port direwolf.conf files (default: a unique subdir of $TMPDIR)")
+	workDir := flag.String("workdir", "", "scratch dir for per-port config files / FIFOs (default: a unique subdir of $TMPDIR)")
 	flag.Parse()
 
 	if *cfgPath == "" {
@@ -50,10 +51,17 @@ func main() {
 		os.Exit(1)
 	}
 
-	bin, err := resolveBinary(*samoyedPath)
-	if err != nil {
-		logger.Error("locate samoyed-direwolf", "err", err)
-		os.Exit(1)
+	samoyedBin, samoyedErr := resolveSamoyed(*samoyedPath)
+	direwolfBin, direwolfErr := resolveDirewolf(*direwolfPath)
+	// Each backend is only required if at least one port uses it; defer
+	// the strict check to router.Start, but warn now so the operator
+	// notices missing binaries before sending KISS frames at a port that
+	// can't actually start.
+	if samoyedErr != nil {
+		logger.Warn("samoyed-direwolf not found; ports with tnc=samoyed (the default) won't start", "err", samoyedErr)
+	}
+	if direwolfErr != nil {
+		logger.Warn("direwolf not found; ports with tnc=direwolf won't start", "err", direwolfErr)
 	}
 
 	stub, err := resolvePreload(*preloadPath)
@@ -69,13 +77,14 @@ func main() {
 		os.Exit(1)
 	}
 
-	logger.Info("starting", "config", *cfgPath, "samoyed", bin, "preload", stub, "workdir", wd)
+	logger.Info("starting", "config", *cfgPath, "samoyed", samoyedBin, "direwolf", direwolfBin, "preload", stub, "workdir", wd)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	r, err := router.Start(ctx, cfg, router.Options{
-		BinaryPath:  bin,
+		SamoyedBin:  samoyedBin,
+		DirewolfBin: direwolfBin,
 		PreloadPath: stub,
 		WorkDir:     wd,
 		Verbose:     *verbose,
@@ -101,7 +110,7 @@ func main() {
 	}
 }
 
-func resolveBinary(explicit string) (string, error) {
+func resolveSamoyed(explicit string) (string, error) {
 	if explicit != "" {
 		if _, err := os.Stat(explicit); err != nil {
 			return "", err
@@ -120,6 +129,24 @@ func resolveBinary(explicit string) (string, error) {
 		}
 	}
 	return "", errors.New("samoyed-direwolf not found in $PATH or common locations")
+}
+
+func resolveDirewolf(explicit string) (string, error) {
+	if explicit != "" {
+		if _, err := os.Stat(explicit); err != nil {
+			return "", err
+		}
+		return explicit, nil
+	}
+	if p, err := exec.LookPath("direwolf"); err == nil {
+		return p, nil
+	}
+	for _, p := range []string{"/usr/bin/direwolf", "/usr/local/bin/direwolf"} {
+		if _, err := os.Stat(p); err == nil {
+			return p, nil
+		}
+	}
+	return "", errors.New("direwolf not found in $PATH or common locations")
 }
 
 func resolvePreload(explicit string) (string, error) {
