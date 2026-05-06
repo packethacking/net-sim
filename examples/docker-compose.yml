@@ -1,0 +1,32 @@
+# Reference docker-compose for embedding net-sim as a test fixture in
+# another project. Pulls the published image from ghcr, mounts a custom
+# topology, and exposes the simulator's KISS ports + web UI.
+#
+# Usage:
+#   docker compose -f examples/docker-compose.yml up -d
+#   curl http://localhost:8080/healthz
+#   curl http://localhost:8080/api/status         # poll until "running":true
+#   # ... your test connects to KISS at 127.0.0.1:8001 / 8002 ...
+#   docker compose -f examples/docker-compose.yml down
+
+services:
+  net-sim:
+    image: ghcr.io/packethacking/net-sim:main
+    # network_mode: host is the simplest option when KISS ports vary by
+    # config — KISS sockets bind directly on the host. Comment this out
+    # and switch to explicit `ports:` if you need stricter isolation.
+    network_mode: host
+    volumes:
+      # Replace with your own network topology.
+      - ./network.yaml:/etc/sim/network.yaml:ro
+    # The default CMD is `-autostart`. Override to drive Start/Stop
+    # manually from your test harness:
+    # command: ["-autostart=false"]
+    healthcheck:
+      # `ok\n` from /healthz once HTTP is up. Polling /api/status from
+      # outside is more useful for a "is the topology actually running"
+      # gate, but /healthz is enough to know we can ask.
+      test: ["CMD-SHELL", "exec 3<>/dev/tcp/127.0.0.1/8080 && echo -e 'GET /healthz HTTP/1.0\\r\\n\\r\\n' >&3 && head -1 <&3 | grep -q '200'"]
+      interval: 2s
+      timeout: 1s
+      retries: 30
