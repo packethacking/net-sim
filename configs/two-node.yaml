@@ -1,6 +1,5 @@
 # Smoke-test config: two nodes, one port each, bidirectional AFSK1200 link.
-# Used by Phase 2 acceptance — send a KISS frame to A's KISS port, expect
-# it to come out of B's KISS port.
+# Send a KISS frame to A's KISS port (8001) and it comes out of B's (8002).
 mixer_mode: fm_capture
 capture_db: 6.0
 collision_mode: silence
