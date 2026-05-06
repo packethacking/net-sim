@@ -30,6 +30,7 @@ import (
 
 	"github.com/packethacking/net-sim/internal/config"
 	"github.com/packethacking/net-sim/internal/router"
+	"gopkg.in/yaml.v3"
 )
 
 //go:embed index.html
@@ -103,6 +104,7 @@ func main() {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", app.handleIndex)
 	mux.HandleFunc("/api/config", app.handleConfig)
+	mux.HandleFunc("/api/topology", app.handleTopology)
 	mux.HandleFunc("/api/start", app.handleStart)
 	mux.HandleFunc("/api/stop", app.handleStop)
 	mux.HandleFunc("/api/restart", app.handleRestart)
@@ -202,6 +204,67 @@ func (a *app) handleConfig(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		w.WriteHeader(http.StatusNoContent)
+	default:
+		http.Error(w, "method", http.StatusMethodNotAllowed)
+	}
+}
+
+// handleTopology is the same content as handleConfig but expressed as
+// JSON, for the form-based editor. GET parses the YAML on disk into a
+// generic map so the client doesn't need to know our struct layout. PUT
+// re-marshals to YAML, runs the strict validator, and saves.
+//
+// The two endpoints share a file (a.cfgPath) — Raw YAML edits and Form
+// edits both end up in the same place. Comments are preserved when
+// editing via /api/config (text in, text out) but lost when editing
+// via /api/topology (round-trips through map → YAML).
+func (a *app) handleTopology(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		b, err := os.ReadFile(a.cfgPath)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		var raw any
+		if err := yaml.Unmarshal(b, &raw); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(raw)
+
+	case http.MethodPut:
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		var raw any
+		if err := json.Unmarshal(body, &raw); err != nil {
+			http.Error(w, "invalid json: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		yamlBytes, err := yaml.Marshal(raw)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if _, err := config.ParseBytes(yamlBytes); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		tmp := a.cfgPath + ".tmp"
+		if err := os.WriteFile(tmp, yamlBytes, 0o644); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if err := os.Rename(tmp, a.cfgPath); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+
 	default:
 		http.Error(w, "method", http.StatusMethodNotAllowed)
 	}

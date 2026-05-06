@@ -4,35 +4,90 @@
 <meta charset="utf-8">
 <title>net-sim</title>
 <style>
+  :root {
+    --bg: #0e0f12; --panel: #16181d; --border: #2c2f36; --border-strong: #3c3f47;
+    --text: #d6d6d6; --muted: #888; --link: #6da4d6;
+    --accent-blue: #2c5282; --accent-blue-hi: #366ba8; --accent-blue-bd: #3c6ca6;
+    --accent-red: #6b2c2c; --accent-red-hi: #7e3535; --accent-red-bd: #8e3a3a;
+    --good-bg: #1e3924; --good-bd: #2e5b3a; --good-fg: #b6e2bf;
+    --bad-bg:  #3a2a2a; --bad-bd:  #5b3a3a; --bad-fg:  #e2b6b6;
+    --hint-bg: #16203a; --hint-bd: #2c3a5e;
+  }
   body { font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-         background: #0e0f12; color: #d6d6d6; margin: 0; padding: 1rem 1.5rem;
+         background: var(--bg); color: var(--text); margin: 0; padding: 1rem 1.5rem;
          font-size: 14px; line-height: 1.4; }
   h1 { font-size: 1rem; margin: 0 0 .5rem 0; color: #e8e8e8; }
-  h1 small { font-weight: normal; color: #888; }
-  .row { display: flex; gap: 1rem; margin: .75rem 0; align-items: center; flex-wrap: wrap; }
-  button { background: #2a2d33; color: #e8e8e8; border: 1px solid #3c3f47;
+  h1 small { font-weight: normal; color: var(--muted); }
+  h2 { font-size: .9rem; margin: 1rem 0 .35rem 0; color: #c8c8c8; font-weight: bold; }
+  .row { display: flex; gap: .75rem; margin: .5rem 0; align-items: center; flex-wrap: wrap; }
+  .row.controls { gap: 1rem; margin: .75rem 0; }
+  button { background: #2a2d33; color: #e8e8e8; border: 1px solid var(--border-strong);
            padding: .35rem .8rem; cursor: pointer; font: inherit; border-radius: 3px; }
   button:hover { background: #353941; }
-  button.primary { background: #2c5282; border-color: #3c6ca6; }
-  button.primary:hover { background: #366ba8; }
-  button.danger { background: #6b2c2c; border-color: #8e3a3a; }
-  button.danger:hover { background: #7e3535; }
-  textarea { width: 100%; min-height: 60vh; background: #16181d; color: #d6d6d6;
-             border: 1px solid #2c2f36; padding: .5rem; font: inherit;
-             box-sizing: border-box; resize: vertical; tab-size: 2; }
+  button.primary { background: var(--accent-blue); border-color: var(--accent-blue-bd); }
+  button.primary:hover { background: var(--accent-blue-hi); }
+  button.danger { background: var(--accent-red); border-color: var(--accent-red-bd); }
+  button.danger:hover { background: var(--accent-red-hi); }
+  button.tiny { padding: .12rem .5rem; font-size: .85em; }
+  button.icon { padding: .15rem .55rem; font-size: .8em; background: #2a2d33;
+                color: #d8a8a8; }
+  button.icon:hover { background: #4a2d2d; color: #f0d0d0; }
+  input[type=text], input[type=number], select, textarea {
+    background: var(--panel); color: var(--text); border: 1px solid var(--border);
+    padding: .25rem .4rem; font: inherit; box-sizing: border-box; border-radius: 2px;
+  }
+  input[type=number] { width: 5.5rem; }
+  input[type=text].small { width: 7rem; }
+  input[type=text].mid   { width: 10rem; }
+  textarea { width: 100%; min-height: 60vh; padding: .5rem; resize: vertical; tab-size: 2; }
+  label.cb { display: inline-flex; align-items: center; gap: .35rem; user-select: none; }
   .pill { display: inline-block; padding: .15rem .5rem; border-radius: 999px;
-          background: #2a2d33; border: 1px solid #3c3f47; }
-  .pill.running { background: #1e3924; border-color: #2e5b3a; color: #b6e2bf; }
-  .pill.stopped { background: #3a2a2a; border-color: #5b3a3a; color: #e2b6b6; }
+          background: #2a2d33; border: 1px solid var(--border-strong); }
+  .pill.running { background: var(--good-bg); border-color: var(--good-bd); color: var(--good-fg); }
+  .pill.stopped { background: var(--bad-bg);  border-color: var(--bad-bd);  color: var(--bad-fg); }
   .err { color: #ffb3b3; white-space: pre-wrap; margin: .5rem 0; }
-  .ok  { color: #b6e2bf; }
-  .ports { display: grid; grid-template-columns: auto auto auto auto; gap: .25rem 1.25rem;
-           margin-top: .25rem; }
-  .ports div { padding: .1rem 0; }
-  .ports .h { color: #888; font-weight: bold; border-bottom: 1px solid #2c2f36; }
-  small.muted { color: #888; }
-  a { color: #6da4d6; }
-  details.help { background: #16181d; border: 1px solid #2c2f36;
+  .ok  { color: var(--good-fg); }
+  .ports-table { display: grid; grid-template-columns: auto auto auto auto; gap: .25rem 1.25rem;
+                 margin: .25rem 0 1rem 0; }
+  .ports-table .h { color: var(--muted); font-weight: bold; border-bottom: 1px solid var(--border); }
+  small.muted, .muted { color: var(--muted); }
+  a { color: var(--link); }
+
+  /* tabs */
+  .tabs { display: flex; gap: 0; border-bottom: 1px solid var(--border); margin: .5rem 0 1rem 0; }
+  .tabs button.tab { background: transparent; border: 1px solid transparent; border-bottom: none;
+                     padding: .4rem .9rem; border-radius: 3px 3px 0 0; color: var(--muted);
+                     margin-bottom: -1px; }
+  .tabs button.tab:hover { color: var(--text); }
+  .tabs button.tab.active { color: #e8e8e8; background: var(--panel);
+                             border-color: var(--border); }
+  .pane { display: none; }
+  .pane.active { display: block; }
+
+  /* form blocks */
+  .block { background: var(--panel); border: 1px solid var(--border);
+           border-radius: 3px; padding: .6rem .75rem; margin: .5rem 0; }
+  .block .block-head { display: flex; justify-content: space-between; align-items: center;
+                       gap: .5rem; margin-bottom: .35rem; }
+  .block .block-head .title { color: #b6c8e2; font-weight: bold; }
+  .sub-block { background: #1c1e23; border: 1px solid var(--border);
+               border-radius: 3px; padding: .5rem .65rem; margin: .35rem 0; }
+  .field { display: inline-flex; align-items: center; gap: .35rem; margin-right: 1rem; }
+  .field label { color: var(--muted); font-size: .85em; }
+  .add-row { margin: .25rem 0; }
+  .ghost { color: var(--muted); font-style: italic; padding: .25rem 0; }
+  .links-grid { display: grid;
+                grid-template-columns: minmax(8rem,max-content) 2rem minmax(8rem,max-content)
+                                       6rem 6rem max-content;
+                gap: .35rem .5rem; align-items: center;
+                justify-content: start; }
+  .links-grid .h { color: var(--muted); font-size: .85em; padding-right: .5rem; }
+  .links-grid > * { min-width: 0; }
+  .links-grid select, .links-grid input[type=number] { width: 100%; }
+  .links-grid button.icon { justify-self: end; }
+
+  /* inline help */
+  details.help { background: var(--panel); border: 1px solid var(--border);
                  padding: .5rem .75rem; margin: .75rem 0; border-radius: 3px; }
   details.help summary { cursor: pointer; color: #b6c8e2; user-select: none; }
   details.help[open] summary { color: #d6e4f5; margin-bottom: .5rem; }
@@ -41,7 +96,8 @@
   .help code { background: #2a2d33; padding: 0 .25rem; border-radius: 2px; }
   .help table { border-collapse: collapse; margin: .25rem 0 .5rem 0; }
   .help th, .help td { padding: .15rem .75rem .15rem 0; text-align: left; border: none; }
-  .help th { color: #888; }
+  .help th { color: var(--muted); }
+  .help pre { margin: 0; font-size: .85em; }
 </style>
 </head>
 <body>
@@ -50,136 +106,524 @@
 <details class="help">
 <summary>What is this? &nbsp;<small class="muted">click to expand</small></summary>
 
-<p>This is the control surface for an AX.25 packet network simulator. Edit the
-YAML below to describe a network of nodes, ports and links; click
-<b>Apply &amp; restart</b> to bring it up. Each port becomes one
-<code>samoyed-direwolf</code> child process exposing a KISS TCP port your
-AX.25 application connects to. The router moves audio between ports
-through an FM capture-effect mixer — no real radios involved.</p>
+<p>This is the control surface for an AX.25 packet network simulator. Define
+a network of nodes, ports and links below; click <b>Apply &amp; restart</b> to
+bring it up. Each port becomes one <code>samoyed-direwolf</code> child
+process exposing a KISS TCP port your AX.25 application connects to.
+The router moves audio between ports through an FM capture-effect mixer
+— no real radios involved.</p>
 
-<h3>Workflow</h3>
-<ol>
-  <li><b>Edit</b> the YAML in the textarea. Strict parser — unknown keys are errors.</li>
-  <li><b>Save</b> writes to <code>{{.ConfigPath}}</code> after validation. Doesn't restart anything.</li>
-  <li><b>Apply &amp; restart</b> = Save + restart the router with the new config.</li>
-  <li><b>Stop</b> tears it all down. The KISS TCP listeners go away.</li>
-</ol>
-
-<h3>YAML sketch</h3>
-<pre style="margin:0;font-size:.85em;">mixer_mode: fm_capture
-capture_db: 6.0          # FM capture ratio, dB
-collision_mode: silence  # silence | sum (stub) | noise (stub)
-
-nodes:
-  - id: a
-    callsign: SIMA
-    ports:
-      - id: vhf
-        modem: { mode: afsk1200 }
-        kiss_port: 8001     # TCP port your AX.25 app connects to
-
-links:                       # directional; both ends must agree on modem
-  - { from: a.vhf, to: b.vhf, loss_db: 0, noise_db: 0 }</pre>
+<h3>Two ways to edit the same network</h3>
+<ul>
+  <li><b>Form</b> tab — dropdowns, add/remove buttons. Rebuilds the
+      YAML on save (comments are not preserved).</li>
+  <li><b>Raw YAML</b> tab — direct text editing. Useful for paste/diff,
+      bulk edits, or comments that survive across saves.</li>
+</ul>
+<p>Both tabs read and write the same file: <code>{{.ConfigPath}}</code>.</p>
 
 <h3>Modem catalogue</h3>
 <table>
 <tr><th>mode</th><th>params</th><th>status</th></tr>
 <tr><td><code>afsk1200</code></td><td>—</td><td>supported</td></tr>
 <tr><td><code>gfsk9600</code></td><td>—</td><td>supported</td></tr>
-<tr><td><code>il2p</code></td><td><code>inner</code> (afsk1200/gfsk9600), <code>crc</code> (bool)</td><td>supported</td></tr>
+<tr><td><code>il2p</code></td><td><code>inner</code> (afsk1200 / gfsk9600), <code>crc</code> (bool)</td><td>supported</td></tr>
 <tr><td><code>bpsk</code></td><td><code>baud</code>, optional <code>carrier_hz</code></td><td>not yet — refused at startup</td></tr>
 </table>
 
-<h3>Hidden-node demo (capture effect)</h3>
-<p>Three nodes A, B, C; A↔B and B↔C linked, A↔C deliberately missing. Equal
-loss → A and C transmitting together collide at B. Set A's loss to 3 dB
-and C's to 15 dB and run again — A "captures" the demodulator at B
-because its 12 dB margin clears the 6 dB threshold. Try it.</p>
-
 <h3>More</h3>
 <p>Full README and architecture notes:
-<a href="https://github.com/packethacking/net-sim#readme" target="_blank">github.com/packethacking/net-sim</a>.
-The audio I/O design lives in
-<a href="https://github.com/packethacking/net-sim/blob/main/NOTES-audio-io.md" target="_blank">NOTES-audio-io.md</a>.</p>
+<a href="https://github.com/packethacking/net-sim#readme" target="_blank">github.com/packethacking/net-sim</a>.</p>
 </details>
 
-<div class="row">
+<div class="row controls">
   <span id="state" class="pill stopped">stopped</span>
   <button class="primary" onclick="apiStart()">Start</button>
   <button onclick="apiRestart()">Apply &amp; restart</button>
   <button class="danger" onclick="apiStop()">Stop</button>
-  <button onclick="reloadConfig()">Revert edits</button>
-  <button onclick="saveConfig()">Save</button>
+  <button onclick="reload()">Revert edits</button>
+  <button onclick="save()">Save</button>
 </div>
 
 <div id="msg"></div>
 
 <div id="ports"></div>
 
-<textarea id="cfg" spellcheck="false"></textarea>
-<small class="muted">
-Strict YAML — unknown keys are errors. Each port's <code>kiss_port</code> is the TCP port your AX.25 app connects to.
-</small>
+<div class="tabs">
+  <button class="tab active" data-tab="form" onclick="selectTab('form')">Form</button>
+  <button class="tab"        data-tab="yaml" onclick="selectTab('yaml')">Raw YAML</button>
+</div>
+
+<div id="pane-form" class="pane active">
+  <div id="form-root"></div>
+</div>
+
+<div id="pane-yaml" class="pane">
+  <textarea id="cfg" spellcheck="false"></textarea>
+  <small class="muted">
+  Strict YAML — unknown keys are errors. Each port's <code>kiss_port</code> is the TCP port your AX.25 app connects to.
+  </small>
+</div>
 
 <script>
+"use strict";
+
 const $ = id => document.getElementById(id);
-const cfgEl = $('cfg');
+
+// ---- network state -------------------------------------------------------
+
+const MODES        = ["afsk1200", "gfsk9600", "il2p", "bpsk"];
+const IL2P_INNER   = ["afsk1200", "gfsk9600"];
+const MIXER_MODES  = ["fm_capture", "linear_sum"];
+const COLLISIONS   = ["silence", "sum", "noise"];
+
+let topology = null;     // the JSON view of /etc/sim/network.yaml
+let activeTab = "form";
 
 function setMsg(text, ok) {
-  const m = $('msg');
-  m.className = ok ? 'ok' : 'err';
-  m.textContent = text || '';
+  const m = $("msg");
+  m.className = ok ? "ok" : "err";
+  m.textContent = text || "";
 }
 
-async function reloadConfig() {
-  const r = await fetch('/api/config');
-  cfgEl.value = await r.text();
-  setMsg('config reloaded from disk', true);
+function selectTab(name) {
+  activeTab = name;
+  for (const t of document.querySelectorAll(".tab")) {
+    t.classList.toggle("active", t.dataset.tab === name);
+  }
+  for (const p of document.querySelectorAll(".pane")) {
+    p.classList.toggle("active", p.id === "pane-" + name);
+  }
+  reload();   // each tab pulls fresh from disk on activation
 }
 
-async function saveConfig() {
-  const r = await fetch('/api/config', { method: 'PUT', body: cfgEl.value });
-  if (r.ok) setMsg('saved (router not restarted — click "Apply & restart")', true);
-  else setMsg('save failed: ' + (await r.text()), false);
+// ---- load / save ---------------------------------------------------------
+
+async function reload() {
+  try {
+    if (activeTab === "yaml") {
+      const r = await fetch("/api/config");
+      $("cfg").value = await r.text();
+    } else {
+      const r = await fetch("/api/topology");
+      topology = ensureShape(await r.json());
+      renderForm();
+    }
+    setMsg("loaded from disk", true);
+  } catch (e) {
+    setMsg("load failed: " + e, false);
+  }
+}
+
+async function save() {
+  try {
+    if (activeTab === "yaml") {
+      const r = await fetch("/api/config", { method: "PUT", body: $("cfg").value });
+      if (!r.ok) throw new Error(await r.text());
+    } else {
+      const r = await fetch("/api/topology", {
+        method: "PUT",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify(topology),
+      });
+      if (!r.ok) throw new Error(await r.text());
+    }
+    setMsg("saved (router not restarted — click Apply & restart)", true);
+  } catch (e) {
+    setMsg("save failed: " + e.message, false);
+  }
   refreshStatus();
 }
 
-async function apiStart()   { await act('/api/start'); }
-async function apiStop()    { await act('/api/stop');  }
-async function apiRestart() { await saveConfig(); await act('/api/restart'); }
+async function apiStart()   { await act("/api/start"); }
+async function apiStop()    { await act("/api/stop"); }
+async function apiRestart() { await save(); await act("/api/restart"); }
 
 async function act(path) {
-  const r = await fetch(path, { method: 'POST' });
-  if (!r.ok) {
-    setMsg(path + ': ' + (await r.text()), false);
-  } else {
-    setMsg(path + ' ok', true);
+  try {
+    const r = await fetch(path, { method: "POST" });
+    if (!r.ok) throw new Error(await r.text());
+    setMsg(path + " ok", true);
+  } catch (e) {
+    setMsg(path + ": " + e.message, false);
   }
   refreshStatus();
 }
 
 async function refreshStatus() {
-  const r = await fetch('/api/status');
-  const s = await r.json();
-  const stEl = $('state');
-  stEl.textContent = s.running ? 'running' : 'stopped';
-  stEl.className = 'pill ' + (s.running ? 'running' : 'stopped');
+  try {
+    const r = await fetch("/api/status");
+    const s = await r.json();
+    const el = $("state");
+    el.textContent = s.running ? "running" : "stopped";
+    el.className = "pill " + (s.running ? "running" : "stopped");
 
-  const ports = $('ports');
-  ports.innerHTML = '';
-  if (s.running && s.ports && s.ports.length) {
-    const grid = document.createElement('div');
-    grid.className = 'ports';
-    grid.innerHTML = '<div class=h>node</div><div class=h>port</div><div class=h>mode</div><div class=h>kiss tcp</div>';
-    for (const p of s.ports) {
-      grid.innerHTML += `<div>${p.node}</div><div>${p.port}</div><div>${p.mode}</div><div>${p.kiss_port}</div>`;
+    const ports = $("ports");
+    ports.innerHTML = "";
+    if (s.running && s.ports && s.ports.length) {
+      const grid = document.createElement("div");
+      grid.className = "ports-table";
+      grid.innerHTML = "<div class=h>node</div><div class=h>port</div><div class=h>mode</div><div class=h>kiss tcp</div>";
+      for (const p of s.ports) {
+        grid.innerHTML += `<div>${esc(p.node)}</div><div>${esc(p.port)}</div><div>${esc(p.mode)}</div><div>${p.kiss_port}</div>`;
+      }
+      ports.appendChild(grid);
     }
-    ports.appendChild(grid);
-  }
-  if (s.last_error) setMsg(s.last_error, false);
+    if (s.last_error) setMsg(s.last_error, false);
+  } catch {/* ignore: status polls every 2s, transient errors are fine */}
 }
 
-reloadConfig();
+// ---- form rendering ------------------------------------------------------
+
+// Make sure topology has the keys the form expects so we never index undefined.
+function ensureShape(t) {
+  t = t || {};
+  if (!t.mixer_mode)     t.mixer_mode = "fm_capture";
+  if (typeof t.capture_db !== "number") t.capture_db = 6.0;
+  if (!t.collision_mode) t.collision_mode = "silence";
+  if (!Array.isArray(t.nodes)) t.nodes = [];
+  if (!Array.isArray(t.links)) t.links = [];
+  for (const n of t.nodes) {
+    if (!Array.isArray(n.ports)) n.ports = [];
+    for (const p of n.ports) {
+      if (!p.modem) p.modem = { mode: "afsk1200" };
+    }
+  }
+  return t;
+}
+
+function renderForm() {
+  const root = $("form-root");
+  root.innerHTML = "";
+
+  // ---- mixer settings ---------------------------------------------------
+  const mixer = mkBlock("Mixer settings");
+  mixer.body.appendChild(mkRow(
+    field("Mixer mode", select(MIXER_MODES, topology.mixer_mode, v => topology.mixer_mode = v)),
+    field("Capture dB", numInput(topology.capture_db, 0.5, v => topology.capture_db = v)),
+    field("Collision mode", select(COLLISIONS, topology.collision_mode, v => topology.collision_mode = v)),
+  ));
+  root.appendChild(mixer.el);
+
+  // ---- nodes ------------------------------------------------------------
+  const nodesHead = document.createElement("h2");
+  nodesHead.textContent = "Nodes";
+  root.appendChild(nodesHead);
+
+  if (topology.nodes.length === 0) {
+    root.appendChild(ghost("No nodes yet — click Add node."));
+  }
+  for (const [ni, node] of topology.nodes.entries()) {
+    root.appendChild(renderNode(node, ni));
+  }
+  root.appendChild(addBtn("+ Add node", () => {
+    topology.nodes.push({ id: nextId("node", topology.nodes.map(n=>n.id)),
+                          callsign: "", ports: [] });
+    renderForm();
+  }));
+
+  // ---- links ------------------------------------------------------------
+  const linksHead = document.createElement("h2");
+  linksHead.textContent = "Links";
+  root.appendChild(linksHead);
+
+  const portRefs = allPortRefs();
+  if (topology.links.length === 0) {
+    root.appendChild(ghost(portRefs.length < 2
+      ? "Add at least two ports before you can link anything."
+      : "No links yet — click Add link."));
+  } else {
+    root.appendChild(renderLinksGrid(portRefs));
+  }
+  root.appendChild(addBtn("+ Add link", () => {
+    if (portRefs.length === 0) {
+      setMsg("add ports first", false);
+      return;
+    }
+    topology.links.push({ from: portRefs[0],
+                          to:   portRefs[Math.min(1, portRefs.length-1)],
+                          loss_db: 0, noise_db: 0 });
+    renderForm();
+  }, portRefs.length === 0));
+}
+
+function renderNode(node, ni) {
+  const blk = mkBlock("Node " + (node.id || "?"));
+  blk.titleEl.textContent = "Node " + (node.id || "?")
+    + (node.callsign ? "  (" + node.callsign + ")" : "");
+
+  const removeBtn = document.createElement("button");
+  removeBtn.className = "icon";
+  removeBtn.textContent = "remove";
+  removeBtn.title = "remove this node (and all its ports + links)";
+  removeBtn.onclick = () => {
+    topology.nodes.splice(ni, 1);
+    // drop links referencing this node
+    const removed = node.id;
+    topology.links = topology.links.filter(l =>
+      !l.from.startsWith(removed + ".") && !l.to.startsWith(removed + "."));
+    renderForm();
+  };
+  blk.head.appendChild(removeBtn);
+
+  blk.body.appendChild(mkRow(
+    field("Node ID", textInput(node.id, "small", v => {
+      // rename links that reference this node
+      const old = node.id;
+      node.id = v;
+      for (const l of topology.links) {
+        if (l.from.startsWith(old + ".")) l.from = v + l.from.slice(old.length);
+        if (l.to.startsWith(old + "."))   l.to   = v + l.to.slice(old.length);
+      }
+      blk.titleEl.textContent = "Node " + (v || "?")
+        + (node.callsign ? "  (" + node.callsign + ")" : "");
+    })),
+    field("Callsign", textInput(node.callsign, "small", v => {
+      node.callsign = v;
+      blk.titleEl.textContent = "Node " + (node.id || "?")
+        + (v ? "  (" + v + ")" : "");
+    })),
+  ));
+
+  const portsHead = document.createElement("div");
+  portsHead.className = "muted";
+  portsHead.textContent = "Ports";
+  portsHead.style.marginTop = ".4rem";
+  blk.body.appendChild(portsHead);
+
+  if (node.ports.length === 0) {
+    blk.body.appendChild(ghost("No ports — every node needs at least one."));
+  }
+  for (const [pi, port] of node.ports.entries()) {
+    blk.body.appendChild(renderPort(node, ni, port, pi));
+  }
+
+  blk.body.appendChild(addBtn("+ Add port", () => {
+    node.ports.push({
+      id: nextId("port", node.ports.map(p => p.id)),
+      modem: { mode: "afsk1200" },
+      kiss_port: nextKissPort(),
+    });
+    renderForm();
+  }));
+
+  return blk.el;
+}
+
+function renderPort(node, ni, port, pi) {
+  const sb = document.createElement("div");
+  sb.className = "sub-block";
+
+  const head = document.createElement("div");
+  head.className = "block-head";
+  const title = document.createElement("span");
+  title.className = "title";
+  title.textContent = "Port " + (port.id || "?") + "  (" + port.modem.mode + ")";
+  head.appendChild(title);
+  const rm = document.createElement("button");
+  rm.className = "icon";
+  rm.textContent = "remove";
+  rm.title = "remove this port";
+  rm.onclick = () => {
+    const removed = node.id + "." + port.id;
+    node.ports.splice(pi, 1);
+    topology.links = topology.links.filter(l => l.from !== removed && l.to !== removed);
+    renderForm();
+  };
+  head.appendChild(rm);
+  sb.appendChild(head);
+
+  const body = document.createElement("div");
+  sb.appendChild(body);
+
+  body.appendChild(mkRow(
+    field("Port ID", textInput(port.id, "small", v => {
+      const old = node.id + "." + port.id;
+      port.id = v;
+      const fresh = node.id + "." + v;
+      for (const l of topology.links) {
+        if (l.from === old) l.from = fresh;
+        if (l.to   === old) l.to   = fresh;
+      }
+      title.textContent = "Port " + (v || "?") + "  (" + port.modem.mode + ")";
+    })),
+    field("Modem", select(MODES, port.modem.mode, v => {
+      port.modem = defaultModem(v);
+      renderForm();
+    })),
+    field("KISS port", numInput(port.kiss_port, 1, v => port.kiss_port = v|0)),
+  ));
+
+  // mode-specific extras
+  if (port.modem.mode === "il2p") {
+    body.appendChild(mkRow(
+      field("Inner", select(IL2P_INNER, port.modem.inner || "afsk1200", v => port.modem.inner = v)),
+      field("CRC",   checkbox(port.modem.crc === true, v => port.modem.crc = v)),
+    ));
+  } else if (port.modem.mode === "bpsk") {
+    body.appendChild(mkRow(
+      field("Baud",       numInput(port.modem.baud || 1200, 100, v => port.modem.baud = v|0)),
+      field("Carrier Hz", numInput(port.modem.carrier_hz || 1500, 100, v => port.modem.carrier_hz = v|0)),
+    ));
+    const note = document.createElement("div");
+    note.className = "muted";
+    note.style.fontSize = ".85em";
+    note.textContent = "BPSK is not yet supported by the current samoyed build — saved configs that use it are refused at Start.";
+    body.appendChild(note);
+  }
+
+  return sb;
+}
+
+function renderLinksGrid(portRefs) {
+  const wrap = document.createElement("div");
+  wrap.className = "block";
+  const grid = document.createElement("div");
+  grid.className = "links-grid";
+
+  // header
+  for (const h of ["from","","to","loss dB","noise dB",""]) {
+    const c = document.createElement("div"); c.className = "h"; c.textContent = h; grid.appendChild(c);
+  }
+
+  for (const [li, link] of topology.links.entries()) {
+    grid.appendChild(wrapInDiv(select(portRefs, link.from, v => link.from = v)));
+    const arrow = document.createElement("div"); arrow.textContent = "→"; arrow.style.textAlign="center"; grid.appendChild(arrow);
+    grid.appendChild(wrapInDiv(select(portRefs, link.to,   v => link.to   = v)));
+    grid.appendChild(wrapInDiv(numInput(link.loss_db,  0.5, v => link.loss_db  = v)));
+    grid.appendChild(wrapInDiv(numInput(link.noise_db || 0, 0.5, v => link.noise_db = v)));
+    const rm = document.createElement("button");
+    rm.className = "icon"; rm.textContent = "remove"; rm.title = "remove this link";
+    rm.onclick = () => { topology.links.splice(li, 1); renderForm(); };
+    grid.appendChild(rm);
+  }
+  wrap.appendChild(grid);
+  return wrap;
+}
+
+// ---- DOM helpers ---------------------------------------------------------
+
+function mkBlock(titleText) {
+  const el = document.createElement("div"); el.className = "block";
+  const head = document.createElement("div"); head.className = "block-head";
+  const titleEl = document.createElement("span"); titleEl.className = "title"; titleEl.textContent = titleText;
+  head.appendChild(titleEl);
+  const body = document.createElement("div");
+  el.appendChild(head); el.appendChild(body);
+  return { el, head, body, titleEl };
+}
+
+function mkRow(...children) {
+  const row = document.createElement("div");
+  row.className = "row";
+  for (const c of children) row.appendChild(c);
+  return row;
+}
+
+function field(label, control) {
+  const f = document.createElement("span"); f.className = "field";
+  const l = document.createElement("label"); l.textContent = label + ":";
+  f.appendChild(l); f.appendChild(control); return f;
+}
+
+function select(options, value, onChange) {
+  const s = document.createElement("select");
+  for (const opt of options) {
+    const o = document.createElement("option");
+    o.value = opt; o.textContent = opt;
+    if (opt === value) o.selected = true;
+    s.appendChild(o);
+  }
+  s.onchange = () => onChange(s.value);
+  return s;
+}
+
+function textInput(value, cls, onChange) {
+  const i = document.createElement("input");
+  i.type = "text"; i.value = value || ""; if (cls) i.className = cls;
+  i.oninput = () => onChange(i.value);
+  return i;
+}
+
+function numInput(value, step, onChange) {
+  const i = document.createElement("input");
+  i.type = "number"; i.value = (value === undefined || value === null) ? 0 : value;
+  i.step = step;
+  i.oninput = () => onChange(parseFloat(i.value));
+  return i;
+}
+
+function checkbox(checked, onChange) {
+  const wrap = document.createElement("label"); wrap.className = "cb";
+  const c = document.createElement("input"); c.type = "checkbox"; c.checked = !!checked;
+  c.onchange = () => onChange(c.checked);
+  wrap.appendChild(c);
+  const txt = document.createElement("span"); txt.textContent = "true";
+  wrap.appendChild(txt);
+  return wrap;
+}
+
+function addBtn(text, onClick, disabled) {
+  const b = document.createElement("button");
+  b.className = "tiny"; b.textContent = text; b.onclick = onClick;
+  b.disabled = !!disabled;
+  const wrap = document.createElement("div"); wrap.className = "add-row";
+  wrap.appendChild(b);
+  return wrap;
+}
+
+function ghost(text) {
+  const g = document.createElement("div"); g.className = "ghost"; g.textContent = text; return g;
+}
+
+function wrapInDiv(child) {
+  const d = document.createElement("div"); d.appendChild(child); return d;
+}
+
+function esc(s) { return String(s).replace(/[&<>"']/g, c => ({
+  "&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;",
+}[c])); }
+
+// ---- helpers -------------------------------------------------------------
+
+function nextId(prefix, taken) {
+  let i = 1;
+  while (true) {
+    const c = (prefix === "node") ? String.fromCharCode(96 + i) : (prefix + i);
+    if (!taken.includes(c)) return c;
+    i++;
+    if (i > 26 && prefix === "node") return "node" + i;
+  }
+}
+
+function nextKissPort() {
+  const used = new Set();
+  for (const n of topology.nodes) for (const p of n.ports) used.add(p.kiss_port);
+  let port = 8001;
+  while (used.has(port)) port++;
+  return port;
+}
+
+function defaultModem(mode) {
+  switch (mode) {
+    case "afsk1200": return { mode };
+    case "gfsk9600": return { mode };
+    case "il2p":     return { mode, inner: "afsk1200", crc: true };
+    case "bpsk":     return { mode, baud: 1200, carrier_hz: 1500 };
+    default:         return { mode };
+  }
+}
+
+function allPortRefs() {
+  const out = [];
+  for (const n of topology.nodes) for (const p of n.ports) out.push(n.id + "." + p.id);
+  return out;
+}
+
+// ---- bootstrap -----------------------------------------------------------
+
+if (location.hash === "#yaml") selectTab("yaml");
+else                           reload();
 refreshStatus();
 setInterval(refreshStatus, 2000);
 </script>
