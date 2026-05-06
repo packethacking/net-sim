@@ -170,7 +170,7 @@ The router will template this per port:
 ADEVICE - udp:127.0.0.1:<rx_audio_udp_port>
 ACHANNELS 1
 CHANNEL 0
-MYCALL <callsign>
+MYCALL N0<derived from node id>   # samoyed wants something here, never used by the simulator
 KISSPORT 0                  # remove the default 8001
 KISSPORT <kiss_tcp_port>    # the one we expose
 AGWPORT 0                   # we don't use AGW

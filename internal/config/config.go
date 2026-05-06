@@ -72,14 +72,19 @@ type Port struct {
 	ID       string `yaml:"id"`
 	Modem    Modem  `yaml:"modem"`
 	KissPort int    `yaml:"kiss_port"`
-	Callsign string `yaml:"callsign,omitempty"`
 }
 
 // Node is a logical station — one or more ports under one identity.
+//
+// We don't model a callsign here on purpose. samoyed's underlying
+// direwolf wants a MYCALL for connected-mode AX.25, digipeating, and
+// beaconing — none of which the simulator enables. Source/destination
+// addresses on transmitted frames come from KISS frames the application
+// hands us, not from MYCALL. The samoyed package derives a synthetic
+// MYCALL from the node id so logs are still readable.
 type Node struct {
-	ID       string `yaml:"id"`
-	Callsign string `yaml:"callsign,omitempty"`
-	Ports    []Port `yaml:"ports"`
+	ID    string `yaml:"id"`
+	Ports []Port `yaml:"ports"`
 }
 
 // Link is a one-directional audio path between two ports.

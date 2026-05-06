@@ -318,7 +318,7 @@ function renderForm() {
   }
   root.appendChild(addBtn("+ Add node", () => {
     topology.nodes.push({ id: nextId("node", topology.nodes.map(n=>n.id)),
-                          callsign: "", ports: [] });
+                          ports: [] });
     renderForm();
   }));
 
@@ -349,8 +349,6 @@ function renderForm() {
 
 function renderNode(node, ni) {
   const blk = mkBlock("Node " + (node.id || "?"));
-  blk.titleEl.textContent = "Node " + (node.id || "?")
-    + (node.callsign ? "  (" + node.callsign + ")" : "");
 
   const removeBtn = document.createElement("button");
   removeBtn.className = "icon";
@@ -375,13 +373,7 @@ function renderNode(node, ni) {
         if (l.from.startsWith(old + ".")) l.from = v + l.from.slice(old.length);
         if (l.to.startsWith(old + "."))   l.to   = v + l.to.slice(old.length);
       }
-      blk.titleEl.textContent = "Node " + (v || "?")
-        + (node.callsign ? "  (" + node.callsign + ")" : "");
-    })),
-    field("Callsign", textInput(node.callsign, "small", v => {
-      node.callsign = v;
-      blk.titleEl.textContent = "Node " + (node.id || "?")
-        + (v ? "  (" + v + ")" : "");
+      blk.titleEl.textContent = "Node " + (v || "?");
     })),
   ));
 

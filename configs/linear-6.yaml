@@ -5,12 +5,12 @@ capture_db: 6.0
 collision_mode: silence
 
 nodes:
-  - { id: a, callsign: SIMA, ports: [{ id: vhf, modem: { mode: afsk1200 }, kiss_port: 8001 }] }
-  - { id: b, callsign: SIMB, ports: [{ id: vhf, modem: { mode: afsk1200 }, kiss_port: 8002 }] }
-  - { id: c, callsign: SIMC, ports: [{ id: vhf, modem: { mode: afsk1200 }, kiss_port: 8003 }] }
-  - { id: d, callsign: SIMD, ports: [{ id: vhf, modem: { mode: afsk1200 }, kiss_port: 8004 }] }
-  - { id: e, callsign: SIME, ports: [{ id: vhf, modem: { mode: afsk1200 }, kiss_port: 8005 }] }
-  - { id: f, callsign: SIMF, ports: [{ id: vhf, modem: { mode: afsk1200 }, kiss_port: 8006 }] }
+  - { id: a, ports: [{ id: vhf, modem: { mode: afsk1200 }, kiss_port: 8001 }] }
+  - { id: b, ports: [{ id: vhf, modem: { mode: afsk1200 }, kiss_port: 8002 }] }
+  - { id: c, ports: [{ id: vhf, modem: { mode: afsk1200 }, kiss_port: 8003 }] }
+  - { id: d, ports: [{ id: vhf, modem: { mode: afsk1200 }, kiss_port: 8004 }] }
+  - { id: e, ports: [{ id: vhf, modem: { mode: afsk1200 }, kiss_port: 8005 }] }
+  - { id: f, ports: [{ id: vhf, modem: { mode: afsk1200 }, kiss_port: 8006 }] }
 
 links:
   - { from: a.vhf, to: b.vhf, loss_db: 0 }

@@ -167,17 +167,9 @@ func Start(ctx context.Context, cfg *config.Config, opts Options) (*Router, erro
 	for _, n := range cfg.Nodes {
 		for _, p := range n.Ports {
 			ref := config.PortRef{NodeID: n.ID, PortID: p.ID}
-			callsign := p.Callsign
-			if callsign == "" {
-				callsign = n.Callsign
-			}
-			if callsign == "" {
-				callsign = "N0CALL"
-			}
 			spec := samoyed.Spec{
 				NodeID:         n.ID,
 				PortID:         p.ID,
-				Callsign:       callsign,
 				Modem:          p.Modem,
 				KissPort:       p.KissPort,
 				RxAudioUDPPort: udpPort,

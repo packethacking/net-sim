@@ -15,14 +15,12 @@ collision_mode: silence
 
 nodes:
   - id: a
-    callsign: SIMA
     ports:
       - id: vhf
         modem: { mode: afsk1200 }
         kiss_port: 8001
 
   - id: middle
-    callsign: HUB
     ports:
       - id: vhf
         modem: { mode: afsk1200 }
@@ -32,7 +30,6 @@ nodes:
         kiss_port: 8003
 
   - id: b
-    callsign: SIMB
     ports:
       - id: vhf
         modem: { mode: afsk1200 }

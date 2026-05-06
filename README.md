@@ -163,7 +163,6 @@ collision_mode: silence       # silence (default) | sum (stub) | noise (stub)
 
 nodes:
   - id: a
-    callsign: SIMA            # used for samoyed's MYCALL
     ports:
       - id: vhf               # unique within the node
         modem: { mode: afsk1200 }
@@ -172,7 +171,6 @@ nodes:
         modem: { mode: gfsk9600 }
         kiss_port: 8002
   - id: b
-    callsign: SIMB
     ports:
       - id: vhf
         modem: { mode: afsk1200 }

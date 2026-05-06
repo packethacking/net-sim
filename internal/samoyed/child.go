@@ -38,7 +38,6 @@ func BytesPerSecond() int { return SampleRate * BytesPerSample }
 // Spec is everything a Child needs to launch.
 type Spec struct {
 	NodeID, PortID string
-	Callsign       string
 	Modem          config.Modem
 	KissPort       int
 	RxAudioUDPPort int // local UDP port the child sends TX audio to (router listens here)
@@ -104,6 +103,32 @@ func Args(m config.Modem) []string {
 	return nil
 }
 
+// deriveCallsign turns a node id into a synthetic AX.25 callsign for
+// MYCALL. samoyed wants something there but we never use it on the TX
+// path (KISS frames carry their own source), so this is purely for
+// log readability — `[a.vhf] N0A-1>APDW01:...` is easier to scan with
+// multiple nodes than the same line saying `N0CALL`.
+//
+// Pads "N0" then takes the alphanumeric prefix of the node id, capping
+// at 6 chars total per the AX.25 v2 callsign limit.
+func deriveCallsign(nodeID string) string {
+	var sb strings.Builder
+	sb.WriteString("N0")
+	for _, r := range strings.ToUpper(nodeID) {
+		if sb.Len() >= 6 {
+			break
+		}
+		if (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') {
+			sb.WriteRune(r)
+		}
+	}
+	if sb.Len() == 2 {
+		// node id was empty / all-punctuation — fall back so MYCALL is valid
+		return "N0SIM"
+	}
+	return sb.String()
+}
+
 // confLines builds the per-port samoyed config file body. The MODEM
 // directive is included only for AFSK1200 — see NOTES-audio-io.md for why
 // other modes are switched on via CLI flags instead.
@@ -112,11 +137,7 @@ func (s Spec) confLines() string {
 	fmt.Fprintf(&sb, "ADEVICE - udp:127.0.0.1:%d\n", s.RxAudioUDPPort)
 	sb.WriteString("ACHANNELS 1\n")
 	sb.WriteString("CHANNEL 0\n")
-	if s.Callsign != "" {
-		fmt.Fprintf(&sb, "MYCALL %s\n", s.Callsign)
-	} else {
-		sb.WriteString("MYCALL N0CALL\n")
-	}
+	fmt.Fprintf(&sb, "MYCALL %s\n", deriveCallsign(s.NodeID))
 	if s.Modem.Mode == config.ModeAFSK1200 ||
 		(s.Modem.Mode == config.ModeIL2P && s.Modem.Inner == config.ModeAFSK1200) {
 		sb.WriteString("MODEM 1200\n")
