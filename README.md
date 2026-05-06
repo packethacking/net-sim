@@ -43,6 +43,45 @@ The audio path is entirely userspace (`stdin` for RX, UDP datagrams for TX
 between samoyed and the router). No PulseAudio, PipeWire, JACK, or
 `snd-aloop` is involved. See `NOTES-audio-io.md` for the gory detail.
 
+## Quick run (Docker)
+
+Pre-built images on ghcr:
+
+```
+docker pull ghcr.io/packethacking/net-sim:main
+```
+
+Bundled default network (two AFSK1200 nodes, KISS on `8001`/`8002`):
+
+```
+docker run --rm -p 8080:8080 -p 8001:8001 -p 8002:8002 \
+  ghcr.io/packethacking/net-sim:main
+```
+
+Open <http://localhost:8080> for the web UI; KISS-attach your AX.25
+application to `localhost:8001` / `localhost:8002`.
+
+For a custom topology — point at any YAML on the host, and use
+`--network=host` so KISS ports can land anywhere without you having to
+predict them:
+
+```
+docker run --rm --network=host \
+  -v $PWD/my-network.yaml:/etc/sim/network.yaml \
+  ghcr.io/packethacking/net-sim:main
+```
+
+Tags published:
+- `:main` and `:main-<sha>` on every push to main
+- `:vX.Y.Z`, `:X.Y`, `:X`, `:latest` on tagged releases
+
+Embedding in another project's tests (e.g. as a fixture for your AX.25
+client / BPQ-style router): mount your network YAML, expose the KISS
+ports your test connects to, then poll `GET /api/status` until
+`running:true` to know the topology is up. The router doesn't auto-
+start by default — issue `POST /api/start` (or set `-autostart` in
+your `docker run`'s args) once the YAML is in place.
+
 ## Quick install (curl | sudo bash)
 
 On a fresh Debian 12 / Ubuntu 24.04+ host (LXC, VM, bare metal — anywhere
