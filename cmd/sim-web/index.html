@@ -32,10 +32,76 @@
   .ports .h { color: #888; font-weight: bold; border-bottom: 1px solid #2c2f36; }
   small.muted { color: #888; }
   a { color: #6da4d6; }
+  details.help { background: #16181d; border: 1px solid #2c2f36;
+                 padding: .5rem .75rem; margin: .75rem 0; border-radius: 3px; }
+  details.help summary { cursor: pointer; color: #b6c8e2; user-select: none; }
+  details.help[open] summary { color: #d6e4f5; margin-bottom: .5rem; }
+  .help h3 { font-size: .9rem; margin: .75rem 0 .25rem 0; color: #d6e4f5; }
+  .help p, .help li { margin: .25rem 0; max-width: 70rem; }
+  .help code { background: #2a2d33; padding: 0 .25rem; border-radius: 2px; }
+  .help table { border-collapse: collapse; margin: .25rem 0 .5rem 0; }
+  .help th, .help td { padding: .15rem .75rem .15rem 0; text-align: left; border: none; }
+  .help th { color: #888; }
 </style>
 </head>
 <body>
 <h1>net-sim &nbsp; <small>{{.ConfigPath}}</small></h1>
+
+<details class="help">
+<summary>What is this? &nbsp;<small class="muted">click to expand</small></summary>
+
+<p>This is the control surface for an AX.25 packet network simulator. Edit the
+YAML below to describe a network of nodes, ports and links; click
+<b>Apply &amp; restart</b> to bring it up. Each port becomes one
+<code>samoyed-direwolf</code> child process exposing a KISS TCP port your
+AX.25 application connects to. The router moves audio between ports
+through an FM capture-effect mixer — no real radios involved.</p>
+
+<h3>Workflow</h3>
+<ol>
+  <li><b>Edit</b> the YAML in the textarea. Strict parser — unknown keys are errors.</li>
+  <li><b>Save</b> writes to <code>{{.ConfigPath}}</code> after validation. Doesn't restart anything.</li>
+  <li><b>Apply &amp; restart</b> = Save + restart the router with the new config.</li>
+  <li><b>Stop</b> tears it all down. The KISS TCP listeners go away.</li>
+</ol>
+
+<h3>YAML sketch</h3>
+<pre style="margin:0;font-size:.85em;">mixer_mode: fm_capture
+capture_db: 6.0          # FM capture ratio, dB
+collision_mode: silence  # silence | sum (stub) | noise (stub)
+
+nodes:
+  - id: a
+    callsign: SIMA
+    ports:
+      - id: vhf
+        modem: { mode: afsk1200 }
+        kiss_port: 8001     # TCP port your AX.25 app connects to
+
+links:                       # directional; both ends must agree on modem
+  - { from: a.vhf, to: b.vhf, loss_db: 0, noise_db: 0 }</pre>
+
+<h3>Modem catalogue</h3>
+<table>
+<tr><th>mode</th><th>params</th><th>status</th></tr>
+<tr><td><code>afsk1200</code></td><td>—</td><td>supported</td></tr>
+<tr><td><code>gfsk9600</code></td><td>—</td><td>supported</td></tr>
+<tr><td><code>il2p</code></td><td><code>inner</code> (afsk1200/gfsk9600), <code>crc</code> (bool)</td><td>supported</td></tr>
+<tr><td><code>bpsk</code></td><td><code>baud</code>, optional <code>carrier_hz</code></td><td>not yet — refused at startup</td></tr>
+</table>
+
+<h3>Hidden-node demo (capture effect)</h3>
+<p>Three nodes A, B, C; A↔B and B↔C linked, A↔C deliberately missing. Equal
+loss → A and C transmitting together collide at B. Set A's loss to 3 dB
+and C's to 15 dB and run again — A "captures" the demodulator at B
+because its 12 dB margin clears the 6 dB threshold. Try it.</p>
+
+<h3>More</h3>
+<p>Full README and architecture notes:
+<a href="https://github.com/packethacking/net-sim#readme" target="_blank">github.com/packethacking/net-sim</a>.
+The audio I/O design lives in
+<a href="https://github.com/packethacking/net-sim/blob/main/NOTES-audio-io.md" target="_blank">NOTES-audio-io.md</a>.</p>
+</details>
 
 <div class="row">
   <span id="state" class="pill stopped">stopped</span>
