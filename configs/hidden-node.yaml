@@ -1,0 +1,42 @@
+# Hidden-node demo, equal levels (mutual destruction).
+#
+# A↔B and B↔C are linked with the same loss. A↔C is *not* — A and C cannot
+# hear each other, so neither knows the other is keying. When both A and C
+# transmit overlapping frames, B sees them at equal RX level: capture
+# margin is 0 dB, well below the 6 dB threshold, so B's mixer falls into
+# the collision branch and decodes nothing.
+#
+# Compare with hidden-node-capture.yaml: same topology, asymmetric loss,
+# A captures over C and its frames punch through.
+mixer_mode: fm_capture
+capture_db: 6.0
+collision_mode: silence
+
+nodes:
+  - id: a
+    callsign: SIMA
+    ports:
+      - id: vhf
+        modem: { mode: afsk1200 }
+        kiss_port: 8001
+  - id: b
+    callsign: SIMB
+    ports:
+      - id: vhf
+        modem: { mode: afsk1200 }
+        kiss_port: 8002
+  - id: c
+    callsign: SIMC
+    ports:
+      - id: vhf
+        modem: { mode: afsk1200 }
+        kiss_port: 8003
+
+links:
+  # A ↔ B
+  - { from: a.vhf, to: b.vhf, loss_db: 0 }
+  - { from: b.vhf, to: a.vhf, loss_db: 0 }
+  # B ↔ C
+  - { from: b.vhf, to: c.vhf, loss_db: 0 }
+  - { from: c.vhf, to: b.vhf, loss_db: 0 }
+  # A and C deliberately *not* linked — they're hidden from each other.
