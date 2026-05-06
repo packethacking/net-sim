@@ -19,8 +19,8 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/M0LTE/net-sim/internal/config"
-	"github.com/M0LTE/net-sim/internal/router"
+	"github.com/packethacking/net-sim/internal/config"
+	"github.com/packethacking/net-sim/internal/router"
 )
 
 func main() {

@@ -22,7 +22,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/M0LTE/net-sim/internal/config"
+	"github.com/packethacking/net-sim/internal/config"
 )
 
 // SampleRate is the audio sample rate samoyed defaults to (and we follow

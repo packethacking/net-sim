@@ -15,15 +15,23 @@ GOFLAGS   ?=
 PRELOAD   := /usr/local/lib/libpa_stub.so
 PRELOAD_C := preload/pa_stub.c
 
-.PHONY: build test fmt vet clean preload \
+.PHONY: build test fmt vet clean preload web \
         demo-hidden-node demo-hidden-node-capture demo-mesh-3 \
         demo-linear-6 demo-star-6 demo-multiport-3 demo-two-node \
-        demo-two-node-noisy
+        demo-two-node-noisy install
 
-build: sim-router preload
+build: sim-router sim-web preload
 
 sim-router: $(shell find . -name '*.go' -not -path './testdata/*')
 	$(GO) build $(GOFLAGS) -o $@ ./cmd/sim-router
+
+sim-web: $(shell find . -name '*.go' -not -path './testdata/*') cmd/sim-web/index.html
+	$(GO) build $(GOFLAGS) -o $@ ./cmd/sim-web
+
+# Convenience target: launch the web UI on :8080, autostart-disabled, with
+# the bootstrap config under /etc/sim/network.yaml so edits survive reboots.
+web: build
+	./sim-web -addr :8080 -config $${SIM_NETWORK_YAML:-/etc/sim/network.yaml}
 
 preload: $(PRELOAD)
 
@@ -43,7 +51,14 @@ fmt:
 	$(GO) fmt ./...
 
 clean:
-	rm -f sim-router
+	rm -f sim-router sim-web
+
+# Installer target: re-runs install.sh against the current checkout. Mostly
+# useful when iterating on install.sh itself; end users run install.sh
+# directly via `curl ... | sudo bash`.
+install:
+	@if [ "$$(id -u)" -ne 0 ]; then echo "run as root: sudo make install"; exit 1; fi
+	./install.sh
 
 # --- demos ----------------------------------------------------------------
 # Each demo target is a thin wrapper. `make demo-<name>` runs the router

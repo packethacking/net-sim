@@ -43,28 +43,83 @@ The audio path is entirely userspace (`stdin` for RX, UDP datagrams for TX
 between samoyed and the router). No PulseAudio, PipeWire, JACK, or
 `snd-aloop` is involved. See `NOTES-audio-io.md` for the gory detail.
 
-## Quick start
+## Quick install (curl | sudo bash)
 
-Prerequisites (Ubuntu 24.04+ / 26.04 LXC tested):
+On a fresh Debian 12 / Ubuntu 24.04+ host (LXC, VM, bare metal — anywhere
+you have root and apt):
+
+```
+curl -fsSL https://raw.githubusercontent.com/packethacking/net-sim/main/install.sh | sudo bash
+```
+
+That script installs apt build-deps, clones and builds samoyed at
+`/opt/samoyed`, clones and builds net-sim at `/opt/sim`, drops the
+LD_PRELOAD shim into `/usr/local/lib/libpa_stub.so`, installs the
+binaries to `/usr/local/bin/`, bootstraps a default two-node network at
+`/etc/sim/network.yaml`, and (where systemd is present) registers and
+starts a `sim-web.service` listening on `:8080`.
+
+Then open <http://your-host:8080/>. The default page lets you edit the
+YAML topology and Start / Stop / Apply-and-restart the simulator.
+
+Override knobs (set as env vars before `sudo bash`):
+
+| Var | Default | Notes |
+|---|---|---|
+| `SIM_DIR` | `/opt/sim` | net-sim checkout |
+| `SAMOYED_DIR` | `/opt/samoyed` | samoyed checkout |
+| `NETWORK_YAML` | `/etc/sim/network.yaml` | the active config |
+| `WEB_PORT` | `8080` | sim-web listen port |
+| `SYSTEMD` | `1` | set to `0` to skip the unit |
+| `SIM_REF` / `SAMOYED_REF` | `main` | git ref to check out |
+
+The script is idempotent — re-run it to update to a newer `main`. It
+does **not** install pulseaudio / pipewire / jackd; the LD_PRELOAD shim
+keeps PortAudio happy without a sound stack (see `NOTES-audio-io.md`).
+
+## Web UI
+
+`sim-web` is a small integrated control surface. One page, one config
+file, three buttons:
+
+- **Start** — load the YAML and bring up the router with one samoyed
+  child per port.
+- **Apply & restart** — save the textarea contents to the YAML file
+  (validated strictly) and recycle the router.
+- **Stop** — tear it all down.
+
+KISS TCP ports are listed live as the topology comes up so you know
+where to point your AX.25 application.
+
+`sim-web` embeds the router; it doesn't shell out to a separate
+`sim-router` binary. Either one is a fine entrypoint:
+
+- Engineer-loop / scripting: `sim-router -config configs/two-node.yaml`
+- Day-to-day editing: the web UI.
+
+## Manual install / build from source
+
+If you'd rather not run an installer, the equivalent steps:
+
+Prerequisites (Debian/Ubuntu):
 
 - Go 1.22+ (`apt install golang`)
 - `gcc`, `make`, `pkg-config`
-- `libudev-dev libhamlib-dev portaudio19-dev libavahi-client-dev libbsd-dev libgps-dev`
-  (samoyed build-time dependencies — required even though we won't use any
-  audio backend at runtime)
+- `libudev-dev libhamlib-dev portaudio19-dev libavahi-client-dev libbsd-dev libgps-dev libasound2-dev`
+  (samoyed build-time deps — required even though we won't use any audio
+  backend at runtime)
 - samoyed checked out and built at `/opt/samoyed`:
   ```
   git clone https://github.com/doismellburning/samoyed /opt/samoyed
-  cd /opt/samoyed && make cmds
+  make -C /opt/samoyed cmds
   ```
-- Stock Dire Wolf (`apt install direwolf`) — used as a reference / sanity
-  check, not at runtime.
+- Stock Dire Wolf (`apt install direwolf`) — reference only, not used at
+  runtime.
 
-Build the router and the LD_PRELOAD shim that papers over PortAudio's
-mandatory init (also explained in `NOTES-audio-io.md`):
+Build:
 
 ```
-make build
+make build       # builds sim-router, sim-web, and /usr/local/lib/libpa_stub.so
 ```
 
 Run the smallest demo:
@@ -73,19 +128,16 @@ Run the smallest demo:
 make demo-two-node
 ```
 
-This brings up two AFSK1200 stations, fully linked, KISS exposed at
-`127.0.0.1:8001` and `127.0.0.1:8002`. Connect from another shell:
+Two AFSK1200 stations, fully linked, KISS exposed at `127.0.0.1:8001`
+and `127.0.0.1:8002`. From another shell:
 
 ```
-# Send a manually crafted KISS frame to A
 nc 127.0.0.1 8001 < some_kiss_frame.bin
-
-# Watch decoded frames come out of B
-nc 127.0.0.1 8002 | xxd
+nc 127.0.0.1 8002 | xxd                # see decoded frames
 ```
 
-Or attach BPQ / kissutil / kissattach directly to those ports — the router
-doesn't touch KISS frames, samoyed handles them natively.
+Or attach BPQ / kissutil / kissattach directly to those ports — the
+router doesn't touch KISS frames, samoyed handles them natively.
 
 ## Demo topologies
 
@@ -194,7 +246,8 @@ qualitatively different things from the same code.
 ## Layout
 
 ```
-cmd/sim-router/main.go     - entrypoint
+cmd/sim-router/            - CLI entrypoint
+cmd/sim-web/               - integrated web UI; embeds the router
 internal/config/           - YAML parsing + validation (strict)
 internal/samoyed/          - per-port samoyed-direwolf process management
                              + the modem-mode → CLI-flags translation
@@ -202,6 +255,7 @@ internal/audio/            - PCM types, FM-capture mixer, noise generator
 internal/router/           - topology, audio routing, glue
 configs/                   - demo topology YAMLs
 preload/pa_stub.c          - 6-line LD_PRELOAD shim for libportaudio
+install.sh                 - curl | sudo bash installer
 NOTES-audio-io.md          - Phase 1 findings (essential reading if you
                              want to understand why we use stdin + UDP)
 ```

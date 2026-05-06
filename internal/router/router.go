@@ -34,9 +34,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/M0LTE/net-sim/internal/audio"
-	"github.com/M0LTE/net-sim/internal/config"
-	"github.com/M0LTE/net-sim/internal/samoyed"
+	"github.com/packethacking/net-sim/internal/audio"
+	"github.com/packethacking/net-sim/internal/config"
+	"github.com/packethacking/net-sim/internal/samoyed"
 )
 
 // Options configures a Router. All paths default to "look up on $PATH".
