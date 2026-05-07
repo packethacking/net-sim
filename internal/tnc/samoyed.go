@@ -8,24 +8,22 @@ import (
 	"os/exec"
 	"path/filepath"
 	"time"
-
-	"github.com/packethacking/net-sim/internal/config"
 )
 
 // samoyedConf renders the per-port samoyed direwolf.conf body.
 //
-// MODEM is included only for AFSK1200; non-1200 modes go on the CLI
-// because samoyed's config-file MODEM directive doesn't activate
-// non-1200 modes (upstream issue tracked separately).
+// All modem flags live here (rather than the CLI) so the translation
+// is config-driven — samoyed#502 made `MODEM` and `IL2PTX` work
+// reliably from the config file.
 func samoyedConf(s Spec) string {
 	var b []byte
 	b = appendf(b, "ADEVICE - udp:127.0.0.1:%d\n", s.RxAudioUDPPort)
 	b = append(b, "ACHANNELS 1\n"...)
 	b = append(b, "CHANNEL 0\n"...)
 	b = appendf(b, "MYCALL %s\n", deriveCallsign(s.NodeID))
-	if s.Modem.Mode == config.ModeAFSK1200 ||
-		(s.Modem.Mode == config.ModeIL2P && s.Modem.Inner == config.ModeAFSK1200) {
-		b = append(b, "MODEM 1200\n"...)
+	for _, line := range modemConfLines(s.Modem) {
+		b = append(b, line...)
+		b = append(b, '\n')
 	}
 	b = append(b, "KISSPORT 0\n"...)
 	b = appendf(b, "KISSPORT %d\n", s.KissPort)
@@ -58,7 +56,6 @@ func startSamoyed(ctx context.Context, s Spec) (*Child, error) {
 	}
 
 	args := []string{"-c", confPath, "-t", "0", "-q", "dh"}
-	args = append(args, modemArgs(s.Modem)...)
 
 	cmd := exec.CommandContext(ctx, s.SamoyedBin, args...)
 	if s.PreloadPath != "" {

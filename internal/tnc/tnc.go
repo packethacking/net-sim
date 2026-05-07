@@ -145,25 +145,34 @@ func SupportedMode(m config.Modem) error {
 	return fmt.Errorf("unknown mode %q", m.Mode)
 }
 
-// modemArgs translates a modem spec into TNC CLI flags. Both samoyed
-// and direwolf accept the same -B/-g/-I flags, so this is shared.
-// Translation table also lives in NOTES-audio-io.md.
-func modemArgs(m config.Modem) []string {
+// modemConfLines translates a modem spec into TNC config-file directives.
+// Both samoyed and direwolf accept the same MODEM/IL2PTX directives, so
+// this is shared. Translation table also lives in NOTES-audio-io.md.
+//
+// `MODEM 9600` already implies G3RUH at that baud rate (see samoyed
+// generic.conf comment "G3RUH style"); no `g3ruh` keyword needed.
+//
+// `IL2PTX <0|1>` enables IL2P transmit with the requested FEC strength
+// (1 = max, 0 = weak). Polarity defaults to normal.
+func modemConfLines(m config.Modem) []string {
 	switch m.Mode {
 	case config.ModeAFSK1200:
-		return nil
+		return []string{"MODEM 1200"}
 	case config.ModeGFSK9600:
-		return []string{"-B", "9600", "-g"}
+		return []string{"MODEM 9600"}
 	case config.ModeIL2P:
 		var out []string
-		if m.Inner == config.ModeGFSK9600 {
-			out = append(out, "-B", "9600", "-g")
+		switch m.Inner {
+		case config.ModeGFSK9600:
+			out = append(out, "MODEM 9600")
+		default:
+			out = append(out, "MODEM 1200")
 		}
-		il2p := "0"
+		fec := "0"
 		if m.FEC == config.FECStrong {
-			il2p = "1"
+			fec = "1"
 		}
-		out = append(out, "-I", il2p)
+		out = append(out, "IL2PTX "+fec)
 		return out
 	}
 	return nil

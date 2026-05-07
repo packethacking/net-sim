@@ -252,9 +252,10 @@ ports:
 | `samoyed` (default) | UDP datagrams | Clean and direct. Needs the LD_PRELOAD shim against PortAudio init. |
 | `direwolf` | ALSA `file` plugin → named pipe | Workaround until upstream Dire Wolf gains UDP audio out. The router writes a per-port `.asoundrc` and a FIFO into `WorkDir`. |
 
-Both backends accept the same modem flags (`-B 9600 -g`, `-I 1`, etc.),
-so a mixed-TNC config works fine — link compatibility is decided by
-modem alone, not by which TNC is on either end.
+Both backends accept the same modem directives (`MODEM 9600`, `IL2PTX 1`,
+etc.) in the per-port config file, so a mixed-TNC config works fine —
+link compatibility is decided by modem alone, not by which TNC is on
+either end.
 
 ### Modem catalogue
 
@@ -309,11 +310,11 @@ pin then. Tracker issues:
 - **No IL2P+CRC (a.k.a. IL2Pc) support.** Samoyed implements the IL2P
   v0.6 base form — header + payload, Reed-Solomon FEC, no trailing 2-byte
   CRC. The `fec` field on `il2p` modems toggles RS strength (`strong` →
-  `-I 1`, `weak` → `-I 0`); it does *not* enable the spec's optional
-  trailing-CRC variant. If your application requires IL2Pc on the wire,
-  this rig won't reproduce it yet. (The field used to be called `crc`,
-  which was misleading — renamed to `fec` to match what it actually
-  does.)
+  `IL2PTX 1`, `weak` → `IL2PTX 0`); it does *not* enable the spec's
+  optional trailing-CRC variant. If your application requires IL2Pc on
+  the wire, this rig won't reproduce it yet. (The field used to be
+  called `crc`, which was misleading — renamed to `fec` to match what
+  it actually does.)
 - **No KISS ACKMODE.** Samoyed's KISS layer explicitly refuses XKISS
   opcodes (`12 = ACKMODE data`, `14 = poll`) — sending one logs
   `Using ACKMODE will cause this error.` and the frame is dropped.
@@ -341,8 +342,8 @@ pin then. Tracker issues:
 cmd/sim-router/            - CLI entrypoint
 cmd/sim-web/               - integrated web UI; embeds the router
 internal/config/           - YAML parsing + validation (strict)
-internal/samoyed/          - per-port samoyed-direwolf process management
-                             + the modem-mode → CLI-flags translation
+internal/tnc/              - per-port samoyed / direwolf process management
+                             + the modem-mode → config-directive translation
 internal/audio/            - PCM types, FM-capture mixer, noise generator
 internal/router/           - topology, audio routing, glue
 configs/                   - demo topology YAMLs

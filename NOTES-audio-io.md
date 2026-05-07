@@ -206,10 +206,10 @@ Tested against this samoyed binary:
 
 | Catalogue `mode` | Status | Invocation | Notes |
 |---|---|---|---|
-| `afsk1200` | ✅ works | config: `MODEM 1200` (or just default) | Bell 202, classic 2m FM AFSK. Phase 1 acceptance verified. |
-| `gfsk9600` | ✅ works | CLI: `-B 9600 -g` | K9NG/G3RUH 9600 baud GMSK. **Config-file `MODEM 9600 g3ruh` is silently ignored** — only the CLI form took effect in our testing. The router will pass `-B 9600 -g` rather than relying on the config directive. |
+| `afsk1200` | ✅ works | config: `MODEM 1200` | Bell 202, classic 2m FM AFSK. Phase 1 acceptance verified. |
+| `gfsk9600` | ✅ works | config: `MODEM 9600` | K9NG/G3RUH 9600 baud GMSK. `MODEM 9600` already implies G3RUH at that baud. (Earlier samoyed builds silently ignored this directive — the bug was tracked at samoyed#502 and is fixed in upstream main.) |
 | `bpsk` | ❌ not supported | — | samoyed has 2400 QPSK (`-B 2400`) and 4800 8PSK (`-B 4800`); HF 300/1200 BPSK is not in the modem catalogue. Router must reject this mode at startup. |
-| `il2p` | ⚠ partial | CLI: `-I 1` for IL2P+CRC, `-I 0` for IL2P (weaker FEC) | IL2P transmit is wrapped around the underlying modem via the `-I` flag. RX-side detection is automatic — no flag needed. The `inner` config key maps to the underlying `-B/-g` flags; `crc` maps to `-I 1` vs `-I 0`. |
+| `il2p` | ⚠ partial | config: `IL2PTX 1` for strong FEC, `IL2PTX 0` for weak FEC | IL2P transmit is wrapped around the underlying modem via the `IL2PTX` directive. RX-side detection is automatic — nothing needed. The `inner` config key maps to the underlying `MODEM` line; `fec` maps to `IL2PTX 1` vs `IL2PTX 0`. |
 
 ### Other CLI flags that matter
 
@@ -223,47 +223,46 @@ Tested against this samoyed binary:
   alternative noise model; v1 uses analog noise injection per the plan.
 - `--bit-error-rate n` — receiver BER. Ditto.
 
-### `MODEM` config quirks observed
+### `MODEM` directive (resolved upstream)
 
-- `MODEM` after `CHANNEL` works for `1200` (default). Setting `MODEM 9600`
-  or `MODEM 9600 g3ruh` does *not* switch the channel to G3RUH — the channel
-  reports back as "1200 baud, AFSK" at startup. The CLI flags `-B 9600 -g`
-  override this correctly. The router uses CLI flags exclusively for non-1200
-  modems.
-- `MODEM 2400` / `MODEM 4800` would in principle activate QPSK / 8PSK; not
-  in the v1 catalogue, not tested.
+Earlier samoyed builds silently ignored `MODEM 9600` (and `MODEM 9600 g3ruh`)
+in the config file when the channel was first seen — the channel reported
+"1200 baud, AFSK" regardless. The router worked around this by passing
+`-B 9600 -g` on the CLI. samoyed#502 traced it to a `-B` override always
+firing, even when the flag wasn't passed; fixed in samoyed `b310445` (PR
+#505). The router now emits `MODEM 9600` in the per-port config and passes
+no modem CLI flags.
 
-## Translation table (mode → samoyed args)
+## Translation table (mode → samoyed config directives)
 
-This becomes the source of truth for `internal/samoyedcmd` (Phase 2):
+This is the source of truth for `internal/tnc/modemConfLines`:
 
 ```
-afsk1200:   conf "MODEM 1200"           (no extra CLI)
-gfsk9600:   CLI  "-B 9600 -g"
+afsk1200:   "MODEM 1200"
+gfsk9600:   "MODEM 9600"
 il2p:
-  inner=afsk1200, fec=strong:  conf "MODEM 1200" + CLI "-I 1"
-  inner=afsk1200, fec=weak:    conf "MODEM 1200" + CLI "-I 0"
-  inner=gfsk9600, fec=strong:  CLI "-B 9600 -g -I 1"
-  inner=gfsk9600, fec=weak:    CLI "-B 9600 -g -I 0"
+  inner=afsk1200, fec=strong:  "MODEM 1200" + "IL2PTX 1"
+  inner=afsk1200, fec=weak:    "MODEM 1200" + "IL2PTX 0"
+  inner=gfsk9600, fec=strong:  "MODEM 9600" + "IL2PTX 1"
+  inner=gfsk9600, fec=weak:    "MODEM 9600" + "IL2PTX 0"
 bpsk:       refuse — not supported by current samoyed
 ```
 
-samoyed's `-I {0,1}` controls Reed-Solomon parity-byte count, *not* the
+samoyed's `IL2PTX 0/1` controls Reed-Solomon parity-byte count, *not* the
 optional 2-byte trailing CRC defined by the IL2P spec — that variant
 ("IL2P+CRC" / "IL2Pc") is not implemented in samoyed at all (verified
 in `src/il2p_send.go` and `src/il2p_codec.go`: the encode path only
 takes `max_fec`). `fec` was named `crc` originally; renamed because the
 old name implied a feature samoyed doesn't have.
 
-## Open issues to file upstream (don't fix here)
+## Open issues filed upstream (don't fix here)
 
-1. PortAudio's PulseAudio-backend init failure is fatal even when no
-   PortAudio device is opened. Mitigation: lazy-init PortAudio only when
-   the configured ADEVICE actually needs it.
-2. `MODEM <baud>` with non-1200 baud in the config file appears not to
-   activate the corresponding modem — the channel keeps the 1200 AFSK
-   defaults. Workaround above is to pass `-B/-g/-I` on the CLI. May be a
-   parser ordering bug.
+1. samoyed#501 — PortAudio's PulseAudio-backend init failure is fatal
+   even when no PortAudio device is opened. Status: open. Mitigation:
+   the LD_PRELOAD shim in `preload/pa_stub.c` no-ops `Pa_Initialize`.
+
+(samoyed#502 — `MODEM <baud>` config-file directive — was the matching
+ticket for this section; closed and merged in `b310445`.)
 
 Both go into samoyed's tracker as issues, not patches. (Hard rule: don't
 touch samoyed source.)

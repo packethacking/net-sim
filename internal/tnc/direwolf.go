@@ -8,8 +8,6 @@ import (
 	"path/filepath"
 	"syscall"
 	"time"
-
-	"github.com/packethacking/net-sim/internal/config"
 )
 
 // direwolfConf renders the per-port direwolf.conf body. The ADEVICE
@@ -25,9 +23,9 @@ func direwolfConf(s Spec) string {
 	b = append(b, "ACHANNELS 1\n"...)
 	b = append(b, "CHANNEL 0\n"...)
 	b = appendf(b, "MYCALL %s\n", deriveCallsign(s.NodeID))
-	if s.Modem.Mode == config.ModeAFSK1200 ||
-		(s.Modem.Mode == config.ModeIL2P && s.Modem.Inner == config.ModeAFSK1200) {
-		b = append(b, "MODEM 1200\n"...)
+	for _, line := range modemConfLines(s.Modem) {
+		b = append(b, line...)
+		b = append(b, '\n')
 	}
 	b = append(b, "KISSPORT 0\n"...)
 	b = appendf(b, "KISSPORT %d\n", s.KissPort)
@@ -92,7 +90,6 @@ func startDirewolf(ctx context.Context, s Spec) (*Child, error) {
 	}
 
 	args := []string{"-c", confPath, "-t", "0", "-q", "dh"}
-	args = append(args, modemArgs(s.Modem)...)
 
 	cmd := exec.CommandContext(ctx, s.DirewolfBin, args...)
 	cmd.Env = append(os.Environ(), "HOME="+portDir)
