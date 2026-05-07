@@ -66,6 +66,7 @@ func main() {
 	preload := flag.String("pa-stub", "", "libpa_stub.so for LD_PRELOAD (default: discover)")
 	workDir := flag.String("workdir", "", "scratch dir for per-port config files / FIFOs (default: temp)")
 	autostart := flag.Bool("autostart", false, "start the router immediately on launch")
+	recordDir := flag.String("record", "", "if set, enables the Record toggle in the UI; recordings land in timestamped subdirectories of this path")
 	flag.Parse()
 
 	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
@@ -95,6 +96,7 @@ func main() {
 		direwolfBin: direwolfBin,
 		preload:     stub,
 		workDir:     *workDir,
+		recordBase:  *recordDir,
 		logger:      logger,
 	}
 
@@ -117,6 +119,9 @@ func main() {
 	mux.HandleFunc("/api/stop", app.handleStop)
 	mux.HandleFunc("/api/restart", app.handleRestart)
 	mux.HandleFunc("/api/status", app.handleStatus)
+	mux.HandleFunc("/api/record/start", app.handleRecordStart)
+	mux.HandleFunc("/api/record/stop", app.handleRecordStop)
+	mux.HandleFunc("/api/record/status", app.handleRecordStatus)
 
 	srv := &http.Server{
 		Addr:              *addr,
@@ -154,6 +159,7 @@ type app struct {
 	direwolfBin string
 	preload     string
 	workDir     string
+	recordBase  string // -record DIR; "" means feature disabled
 	logger      *slog.Logger
 	tmpl        *template.Template
 
@@ -162,6 +168,12 @@ type app struct {
 	cancel   context.CancelFunc
 	lastErr  string
 	lastTime time.Time
+
+	// recordEnabled is the user's "record" toggle state. It persists
+	// across router Start/Stop/Restart cycles, so a user who turned
+	// recording on and then clicked Apply&Restart gets a fresh session
+	// in the new run rather than having to re-toggle.
+	recordEnabled bool
 }
 
 type pageData struct {
@@ -325,6 +337,15 @@ type statusResponse struct {
 	Ports     []portStatusItem `json:"ports"`
 	LastError string           `json:"last_error,omitempty"`
 	LastEvent string           `json:"last_event,omitempty"`
+	Record    recordStatus     `json:"record"`
+}
+
+type recordStatus struct {
+	Available bool   `json:"available"`         // -record DIR was set on the CLI
+	Enabled   bool   `json:"enabled"`           // user has toggled recording on
+	Active    bool   `json:"active"`            // a session is currently capturing
+	Base      string `json:"base,omitempty"`    // configured base dir
+	Dir       string `json:"dir,omitempty"`     // current session dir, when active
 }
 
 type portStatusItem struct {
@@ -361,8 +382,64 @@ func (a *app) writeStatus(w http.ResponseWriter) {
 			}
 		}
 	}
+
+	resp.Record = recordStatus{
+		Available: a.recordBase != "",
+		Enabled:   a.recordEnabled,
+		Base:      a.recordBase,
+	}
+	if a.router != nil {
+		resp.Record.Active = a.router.RecordingActive()
+		resp.Record.Dir = a.router.RecordingDir()
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(resp)
+}
+
+func (a *app) handleRecordStart(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method", http.StatusMethodNotAllowed)
+		return
+	}
+	a.mu.Lock()
+	if a.recordBase == "" {
+		a.mu.Unlock()
+		http.Error(w, "recording disabled: sim-web was started without -record DIR", http.StatusBadRequest)
+		return
+	}
+	a.recordEnabled = true
+	rt := a.router
+	a.mu.Unlock()
+	if rt != nil {
+		if _, err := rt.StartRecording(); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+	}
+	a.writeStatus(w)
+}
+
+func (a *app) handleRecordStop(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method", http.StatusMethodNotAllowed)
+		return
+	}
+	a.mu.Lock()
+	a.recordEnabled = false
+	rt := a.router
+	a.mu.Unlock()
+	if rt != nil {
+		if err := rt.StopRecording(); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+	}
+	a.writeStatus(w)
+}
+
+func (a *app) handleRecordStatus(w http.ResponseWriter, _ *http.Request) {
+	a.writeStatus(w)
 }
 
 func (a *app) start() error {
@@ -399,11 +476,13 @@ func (a *app) start() error {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	r, err := router.Start(ctx, cfg, router.Options{
-		SamoyedBin:  a.samoyedBin,
-		DirewolfBin: a.direwolfBin,
-		PreloadPath: a.preload,
-		WorkDir:     a.workDir,
-		Logger:      a.logger,
+		SamoyedBin:    a.samoyedBin,
+		DirewolfBin:   a.direwolfBin,
+		PreloadPath:   a.preload,
+		WorkDir:       a.workDir,
+		Logger:        a.logger,
+		RecordDir:     a.recordBase,
+		RecordOnStart: a.recordEnabled && a.recordBase != "",
 	})
 	if err != nil {
 		cancel()

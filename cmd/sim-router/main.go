@@ -30,6 +30,7 @@ func main() {
 	direwolfPath := flag.String("direwolf", "", "path to direwolf (default: search $PATH)")
 	preloadPath := flag.String("pa-stub", "", "path to libpa_stub.so for LD_PRELOAD (default: search common install paths)")
 	workDir := flag.String("workdir", "", "scratch dir for per-port config files / FIFOs (default: a unique subdir of $TMPDIR)")
+	recordDir := flag.String("record", "", "if set, record all per-port TX and RX audio to a timestamped subdirectory of this path")
 	flag.Parse()
 
 	if *cfgPath == "" {
@@ -83,12 +84,14 @@ func main() {
 	defer cancel()
 
 	r, err := router.Start(ctx, cfg, router.Options{
-		SamoyedBin:  samoyedBin,
-		DirewolfBin: direwolfBin,
-		PreloadPath: stub,
-		WorkDir:     wd,
-		Verbose:     *verbose,
-		Logger:      logger,
+		SamoyedBin:    samoyedBin,
+		DirewolfBin:   direwolfBin,
+		PreloadPath:   stub,
+		WorkDir:       wd,
+		Verbose:       *verbose,
+		Logger:        logger,
+		RecordDir:     *recordDir,
+		RecordOnStart: *recordDir != "",
 	})
 	if err != nil {
 		logger.Error("start router", "err", err)

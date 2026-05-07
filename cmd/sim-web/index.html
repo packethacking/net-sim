@@ -156,6 +156,11 @@ modem only.</p>
   <button class="danger" onclick="apiStop()">Stop</button>
   <button onclick="reload()">Revert edits</button>
   <button onclick="save()">Save</button>
+  <label class="cb" id="rec-label" hidden>
+    <input type="checkbox" id="rec-toggle" onchange="apiRecordToggle()">
+    <span>Record</span>
+  </label>
+  <span id="rec-status" class="muted"></span>
 </div>
 
 <div id="msg"></div>
@@ -252,6 +257,11 @@ async function apiStart()   { await act("/api/start"); }
 async function apiStop()    { await act("/api/stop"); }
 async function apiRestart() { await save(); await act("/api/restart"); }
 
+async function apiRecordToggle() {
+  const want = $("rec-toggle").checked;
+  await act(want ? "/api/record/start" : "/api/record/stop");
+}
+
 async function act(path) {
   try {
     const r = await fetch(path, { method: "POST" });
@@ -282,6 +292,29 @@ async function refreshStatus() {
       }
       ports.appendChild(grid);
     }
+
+    // Recording controls: only show if sim-web was started with -record DIR.
+    const rec = s.record || {};
+    const recLabel  = $("rec-label");
+    const recToggle = $("rec-toggle");
+    const recStatus = $("rec-status");
+    if (rec.available) {
+      recLabel.hidden = false;
+      recToggle.checked = !!rec.enabled;
+      if (rec.active && rec.dir) {
+        recStatus.textContent = "→ " + rec.dir;
+      } else if (rec.enabled && !s.running) {
+        recStatus.textContent = "(armed; will start with router)";
+      } else if (rec.enabled) {
+        recStatus.textContent = "(arming…)";
+      } else {
+        recStatus.textContent = "";
+      }
+    } else {
+      recLabel.hidden = true;
+      recStatus.textContent = "";
+    }
+
     if (s.last_error) setMsg(s.last_error, false);
   } catch {/* ignore: status polls every 2s, transient errors are fine */}
 }

@@ -33,6 +33,7 @@ import (
 	"log/slog"
 	"net"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/packethacking/net-sim/internal/audio"
@@ -49,6 +50,17 @@ type Options struct {
 	Verbose             bool   // log every routing decision
 	Logger              *slog.Logger
 	StartingRxAudioPort int // first ephemeral UDP port for samoyed-→-router audio
+
+	// RecordDir, if non-empty, is the base directory under which WAV
+	// recordings are written. Each call to StartRecording (or the
+	// auto-start path triggered by RecordOnStart) creates a fresh
+	// timestamped subdirectory holding two files per port — <node>.<port>.tx.wav
+	// and <node>.<port>.rx.wav.
+	RecordDir string
+
+	// RecordOnStart causes Router.Start to begin recording immediately
+	// after children come up. Ignored if RecordDir is empty.
+	RecordOnStart bool
 }
 
 // Router is the running simulator.
@@ -70,6 +82,13 @@ type Router struct {
 	// need to track per-destination read positions on a shared queue.
 	linkQueues map[config.PortRef][]*linkQueue // keyed by source
 	rxLinks    map[config.PortRef][]*linkQueue // keyed by destination
+
+	// session is the active recording session, or nil. Read on the audio
+	// hot path (txReader, rxFeeder) so it lives in an atomic pointer.
+	// recordMu serialises Start/StopRecording against each other and
+	// against shutdown.
+	session  atomic.Pointer[recordSession]
+	recordMu sync.Mutex
 
 	cancel context.CancelFunc
 	wg     sync.WaitGroup
@@ -237,6 +256,12 @@ func Start(ctx context.Context, cfg *config.Config, opts Options) (*Router, erro
 		}()
 	}
 
+	if opts.RecordDir != "" && opts.RecordOnStart {
+		if _, err := r.StartRecording(); err != nil {
+			r.logger.Warn("auto-start recording failed", "err", err)
+		}
+	}
+
 	return r, nil
 }
 
@@ -251,8 +276,68 @@ func (r *Router) shutdown() error {
 		_ = c.Stop()
 	}
 	r.wg.Wait()
+	if s := r.session.Swap(nil); s != nil {
+		s.Close()
+	}
 	return nil
 }
+
+// StartRecording opens a fresh timestamped subdirectory under
+// Options.RecordDir, opens a TX + RX wav per port, and installs the
+// session as the live recorder. It is an error to call this when a
+// session is already active or when RecordDir is empty. Returns the
+// absolute directory path being recorded into.
+func (r *Router) StartRecording() (string, error) {
+	r.recordMu.Lock()
+	defer r.recordMu.Unlock()
+	if r.opts.RecordDir == "" {
+		return "", errors.New("recorder: no RecordDir configured")
+	}
+	if r.session.Load() != nil {
+		return "", errors.New("recorder: already recording")
+	}
+	var refs []config.PortRef
+	for _, n := range r.cfg.Nodes {
+		for _, p := range n.Ports {
+			refs = append(refs, config.PortRef{NodeID: n.ID, PortID: p.ID})
+		}
+	}
+	s, err := newRecordSession(r.opts.RecordDir, refs, r.logger)
+	if err != nil {
+		return "", err
+	}
+	r.session.Store(s)
+	return s.Dir(), nil
+}
+
+// StopRecording closes the current session (flushes WAV headers) and
+// disarms the audio-path tap. No error if there is no active session.
+func (r *Router) StopRecording() error {
+	r.recordMu.Lock()
+	defer r.recordMu.Unlock()
+	s := r.session.Swap(nil)
+	if s == nil {
+		return nil
+	}
+	s.Close()
+	return nil
+}
+
+// RecordingActive reports whether a session is currently capturing.
+func (r *Router) RecordingActive() bool { return r.session.Load() != nil }
+
+// RecordingDir returns the directory of the current session, or "" if
+// none.
+func (r *Router) RecordingDir() string {
+	if s := r.session.Load(); s != nil {
+		return s.Dir()
+	}
+	return ""
+}
+
+// RecordingBase returns the configured base directory (Options.RecordDir),
+// or "" if the router was started without one.
+func (r *Router) RecordingBase() string { return r.opts.RecordDir }
 
 // Wait blocks until the router stops (e.g. ctx cancelled or child died).
 func (r *Router) Wait() {
@@ -296,6 +381,9 @@ func (r *Router) txReader(ctx context.Context, ref config.PortRef, c *tnc.Child)
 			pending = pending[audio.BlockBytes:]
 			if r.opts.Verbose {
 				r.logger.Debug("tx block", "port", ref, "peak", blk.PeakAbs(), "outgoing", len(outgoing))
+			}
+			if s := r.session.Load(); s != nil {
+				s.WriteTX(ref, blk)
 			}
 			for _, q := range outgoing {
 				q.pushNonBlocking(blk, r.logger)
@@ -365,6 +453,10 @@ func (r *Router) rxFeeder(ctx context.Context, dst config.PortRef, stdin io.Writ
 				"port", dst, "decision", decisionName(dec),
 				"sources", len(active),
 				"peak", blk.PeakAbs())
+		}
+
+		if s := r.session.Load(); s != nil {
+			s.WriteRX(dst, blk)
 		}
 
 		if _, err := stdin.Write(blk); err != nil {

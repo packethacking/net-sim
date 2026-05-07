@@ -271,6 +271,57 @@ with a clear error*. Adding a new mode is config plumbing — see the
 translation table in `internal/samoyed/child.go` and the source-of-truth
 table in `NOTES-audio-io.md`.
 
+## Recording runs
+
+Both `sim-router` and `sim-web` can write per-port WAV recordings of
+every transmission and every receive-side mix. Files are mono 16-bit LE
+PCM at 44.1 kHz — the simulator's native format, so recording is a
+straight tee with no resampling.
+
+**`sim-router`** — pass `-record DIR`. Recording starts as soon as the
+router comes up. Each run gets its own timestamped subdirectory:
+
+```
+sim-router -config configs/hidden-node.yaml -record /tmp/sim-rec
+# /tmp/sim-rec/20260506T120000Z/a.vhf.tx.wav
+# /tmp/sim-rec/20260506T120000Z/a.vhf.rx.wav
+# /tmp/sim-rec/20260506T120000Z/b.vhf.tx.wav   ...
+```
+
+For each port `<node>.<port>` you get two files:
+
+- `*.tx.wav` — exactly what the TNC keyed onto the air.
+- `*.rx.wav` — what the TNC's demodulator actually heard, post-mix:
+  silence, captured signal, collision (silence in v1), and any per-link
+  noise.
+
+All `.rx.wav` files for a single run share a clock — they're sample-aligned,
+so loading them into Audacity as separate tracks shows you exactly which
+station a receiver was hearing at any moment.
+
+**`sim-web`** — pass `-record DIR` to enable the feature; a Record
+checkbox appears next to Start/Stop. Toggle it any time:
+
+- **Off → on while running** — opens a fresh session immediately.
+- **On → off while running** — closes the current session (WAV headers
+  are patched on close so the files are valid).
+- **Toggled while stopped** — recording is "armed"; it will start when
+  the next Start/Apply &amp; restart brings the router up.
+
+The toggle survives Apply &amp; restart, so you can edit the topology and
+keep recording across the restart with one click.
+
+**Disk usage**: ~88 KB/s per stream. A 6-node mesh with two streams per
+port ≈ 1 MB/s, ≈ 3.5 GB/hour. WAV size is capped by a 32-bit chunk-size
+field — at this rate a single file fills at ~13.5 hours. Long enough that
+v1 doesn't rotate; short enough to mention.
+
+**Crash safety**: WAV headers are patched on `Close`. If the process is
+killed without a clean shutdown, the file is still readable as raw PCM
+but its data-chunk size will say zero — most players will refuse to
+play it. Stop the router cleanly (or click Record off) before pulling
+the plug.
+
 ## Why FM capture-effect mixing (and not linear sum)
 
 A linear-sum mixer is simpler and is what most "audio bus" libraries
@@ -328,7 +379,8 @@ pin then. Tracker issues:
   but no demos shipped).
 - Hot reload of topology (restart the router).
 - Web UI / topology visualisation. Logs to stderr, that's the interface.
-- Recording / playback of test runs.
+- Playback / injection of recorded WAVs back into the router (recording
+  to WAV is supported — see "Recording runs" below).
 - BER / FER reporting beyond the basic frame counters demonstrable from
   KISS sniffing.
 - SSB modelling, AGC, pre/de-emphasis, multipath, Doppler, fading.
@@ -344,7 +396,8 @@ cmd/sim-web/               - integrated web UI; embeds the router
 internal/config/           - YAML parsing + validation (strict)
 internal/tnc/              - per-port samoyed / direwolf process management
                              + the modem-mode → config-directive translation
-internal/audio/            - PCM types, FM-capture mixer, noise generator
+internal/audio/            - PCM types, FM-capture mixer, noise generator,
+                             WAV recorder
 internal/router/           - topology, audio routing, glue
 configs/                   - demo topology YAMLs
 preload/pa_stub.c          - 6-line LD_PRELOAD shim for libportaudio
