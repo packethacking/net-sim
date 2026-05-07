@@ -1,26 +1,24 @@
 # /opt/sim/Makefile — sim-router and the demo topologies.
 #
 # Common workflow:
-#   make build         # compile the Go router and the LD_PRELOAD shim
+#   make build         # compile sim-router and sim-web
 #   make test          # go vet + go test ./...
 #   make demo-hidden-node          # see Phase 3 capture-effect baseline
 #   make demo-hidden-node-capture  # capture-effect, asymmetric levels
 #   make demo-mesh-3 / demo-linear-6 / demo-star-6 / demo-multiport-3
 #
-# By default the binary searches /opt/samoyed/dist for samoyed-direwolf
-# and /usr/local/lib for libpa_stub.so. Override with -samoyed / -pa-stub.
+# By default the binary searches /opt/samoyed/dist for samoyed-direwolf.
+# Override with -samoyed.
 
 GO        ?= go
 GOFLAGS   ?=
-PRELOAD   := /usr/local/lib/libpa_stub.so
-PRELOAD_C := preload/pa_stub.c
 
-.PHONY: build test fmt vet clean preload web \
+.PHONY: build test fmt vet clean web \
         demo-hidden-node demo-hidden-node-capture demo-mesh-3 \
         demo-linear-6 demo-star-6 demo-multiport-3 demo-two-node \
         demo-two-node-noisy install
 
-build: sim-router sim-web preload
+build: sim-router sim-web
 
 sim-router: $(shell find . -name '*.go' -not -path './testdata/*')
 	$(GO) build $(GOFLAGS) -o $@ ./cmd/sim-router
@@ -32,14 +30,6 @@ sim-web: $(shell find . -name '*.go' -not -path './testdata/*') cmd/sim-web/inde
 # the bootstrap config under /etc/sim/network.yaml so edits survive reboots.
 web: build
 	./sim-web -addr :8080 -config $${SIM_NETWORK_YAML:-/etc/sim/network.yaml}
-
-preload: $(PRELOAD)
-
-$(PRELOAD): $(PRELOAD_C)
-	@if [ ! -w $$(dirname $(PRELOAD)) ]; then \
-		echo "$(PRELOAD) is not writable; rerun as root or build with sudo"; exit 1; \
-	fi
-	gcc -shared -fPIC -o $(PRELOAD) $(PRELOAD_C)
 
 test: vet
 	$(GO) test ./...

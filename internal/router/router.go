@@ -45,7 +45,6 @@ import (
 type Options struct {
 	SamoyedBin          string // path to samoyed-direwolf
 	DirewolfBin         string // path to direwolf
-	PreloadPath         string // path to libpa_stub.so
 	WorkDir             string // where temporary config files / FIFOs go
 	Verbose             bool   // log every routing decision
 	Logger              *slog.Logger
@@ -201,7 +200,6 @@ func Start(ctx context.Context, cfg *config.Config, opts Options) (*Router, erro
 				RxAudioUDPPort: udpPort,
 				SamoyedBin:     opts.SamoyedBin,
 				DirewolfBin:    opts.DirewolfBin,
-				PreloadPath:    opts.PreloadPath,
 				WorkDir:        opts.WorkDir,
 			}
 			// direwolf doesn't use the per-port UDP port. Reserve it

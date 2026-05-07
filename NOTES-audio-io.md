@@ -49,51 +49,20 @@ useful for A/B sanity checks — but is **not** used at runtime. It only links
 against ALSA (no UDP audio output), so it can't be the audio sink in this
 architecture.
 
-## The PortAudio problem (and the workaround)
+## PortAudio (resolved upstream)
 
-samoyed cgo-links libportaudio (the `gordonklaus/portaudio` Go binding wraps
-PortAudio 19.7+git20260206 from the Ubuntu archive). On this LXC PortAudio's
-PulseAudio host backend tries `pa_context_connect` and fails (no daemon, by
-deliberate plan rule). In this build that failure is fatal:
-`Pa_Initialize()` returns `paUnanticipatedHostError`, samoyed prints
-"`Pointless to continue without audio device`" and exits — even though we
-have no intention of opening any PortAudio stream (`ADEVICE - udp:...` is
-pure stdin/UDP).
+Earlier samoyed builds called `Pa_Initialize()` unconditionally at startup
+and bailed out (`Pointless to continue without audio device`) on hosts
+with no PortAudio backend, even when `ADEVICE` selected `udp:` + `stdin`
+and no PortAudio stream would ever be opened. We worked around it with
+a tiny `LD_PRELOAD` shim that no-op'd `Pa_Initialize` / `Pa_Terminate`.
 
-Confirmed by minimal cgo program:
-
-```
-$ go run main.go
-Init err: PulseAudio_Initialize: Can't connect to server
-HostApis err=PortAudio not initialized count=0
-```
-
-Fix: a 6-line `LD_PRELOAD` shim that no-ops `Pa_Initialize` /
-`Pa_Terminate`. samoyed never actually calls any other PortAudio function on
-this code path because the audio I/O type is decided as `STDIN` for input and
-the UDP path for output; both bypass the PortAudio code path entirely.
-
-```c
-// /opt/sim/preload/pa_stub.c
-typedef int PaError;
-PaError Pa_Initialize(void) { return 0; }
-PaError Pa_Terminate(void)  { return 0; }
-```
-
-Build:
-
-```
-gcc -shared -fPIC -o /usr/local/lib/libpa_stub.so /opt/sim/preload/pa_stub.c
-```
-
-This is the minimum incision that satisfies the rules. We're not modifying
-samoyed (per the hard rule), not installing a sound daemon (per the hard
-rule), and we're scoped tightly enough that any future PortAudio call from
-samoyed would crash loudly rather than silently mis-behave — which is the
-behaviour we want if the assumption ever drifts.
-
-If/when samoyed gains a "no audio backend required" mode (or PortAudio is
-initialised lazily), this shim disappears. Worth opening an upstream issue.
+That has been fixed upstream (samoyed#501, merged in samoyed `cba41c1`):
+samoyed now only initialises PortAudio when an `ADEVICE` actually needs
+it. The shim and all its plumbing have been removed; net-sim spawns
+`samoyed-direwolf` with no `LD_PRELOAD`. Smoke-tested on a host with no
+PulseAudio / ALSA card / JACK — samoyed reports the channel and serves
+KISS without complaint.
 
 ## Working pipeline
 
@@ -117,7 +86,6 @@ EOF
 
 # Strip 44-byte WAV header, feed raw PCM via stdin
 ( dd if=/tmp/g1200.wav bs=1 skip=44 status=none ) | \
-  LD_PRELOAD=/usr/local/lib/libpa_stub.so \
   samoyed-direwolf -c /tmp/d.conf -t 0 -q d
 ```
 
@@ -166,10 +134,10 @@ EOF
 socat -u UDP-RECV:7100,reuseaddr UDP-DATAGRAM:127.0.0.1:7200 &
 
 # Start B (RX side first so its UDP listener is up)
-LD_PRELOAD=/usr/local/lib/libpa_stub.so samoyed-direwolf -c /tmp/dB.conf -t 0 -q d &
+samoyed-direwolf -c /tmp/dB.conf -t 0 -q d &
 
 # Start A (eat /dev/zero on stdin → silence baseline)
-cat /dev/zero | LD_PRELOAD=/usr/local/lib/libpa_stub.so samoyed-direwolf -c /tmp/dA.conf -t 0 -q d &
+cat /dev/zero | samoyed-direwolf -c /tmp/dA.conf -t 0 -q d &
 
 # Send a KISS frame to A → expect it to come out of B
 nc 127.0.0.1 8201 < kiss_frame.bin
@@ -255,14 +223,18 @@ in `src/il2p_send.go` and `src/il2p_codec.go`: the encode path only
 takes `max_fec`). `fec` was named `crc` originally; renamed because the
 old name implied a feature samoyed doesn't have.
 
-## Open issues filed upstream (don't fix here)
+## Upstream issues (closed)
 
-1. samoyed#501 — PortAudio's PulseAudio-backend init failure is fatal
-   even when no PortAudio device is opened. Status: open. Mitigation:
-   the LD_PRELOAD shim in `preload/pa_stub.c` no-ops `Pa_Initialize`.
+Both of the original blocking samoyed bugs that net-sim worked around
+have been fixed upstream and the workarounds removed here:
 
-(samoyed#502 — `MODEM <baud>` config-file directive — was the matching
-ticket for this section; closed and merged in `b310445`.)
+- samoyed#501 — `Pa_Initialize()` was fatal on daemon-less hosts even
+  when `ADEVICE` was `udp:` / `stdin`. Fixed in samoyed `cba41c1`
+  (PR #507): PortAudio is now initialised lazily.
+- samoyed#502 — `MODEM <baud>` directive in the config file silently
+  fell back to defaults when the channel was first seen. Fixed in
+  samoyed `b310445` (PR #505): the `-B` CLI override no longer fires
+  when the flag wasn't passed.
 
-Both go into samoyed's tracker as issues, not patches. (Hard rule: don't
-touch samoyed source.)
+Hard rule: we don't patch samoyed from net-sim. Anything we hit goes
+into samoyed's tracker as an issue or PR.

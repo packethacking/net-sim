@@ -1,7 +1,7 @@
 # Multi-stage build for the net-sim simulator (sim-router + sim-web).
 #
 # Builder stage: clones samoyed, compiles it; builds the Go binaries
-# from this checkout; compiles the LD_PRELOAD shim.
+# from this checkout.
 #
 # Runtime stage: a slim image carrying just the binaries, the
 # samoyed-direwolf runtime libraries (libportaudio2 et al.), and the
@@ -46,8 +46,7 @@ COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
 RUN go build -ldflags="-s -w" -o /out/sim-router ./cmd/sim-router \
- && go build -ldflags="-s -w" -o /out/sim-web    ./cmd/sim-web \
- && gcc -shared -fPIC -O2 -o /out/libpa_stub.so preload/pa_stub.c
+ && go build -ldflags="-s -w" -o /out/sim-web    ./cmd/sim-web
 
 # ---- runtime ------------------------------------------------------------
 FROM debian:bookworm-slim AS runtime
@@ -62,22 +61,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # binaries
 COPY --from=builder /out/sim-router         /usr/local/bin/sim-router
 COPY --from=builder /out/sim-web            /usr/local/bin/sim-web
-COPY --from=builder /out/libpa_stub.so      /usr/local/lib/libpa_stub.so
 COPY --from=builder /src/samoyed/dist/samoyed-direwolf /usr/local/bin/samoyed-direwolf
 
 # default network — overridable via volume mount
 COPY configs/two-node.yaml /etc/sim/network.yaml
 
-# LD_PRELOAD is required so samoyed-direwolf doesn't try to bring up a
-# PortAudio backend in a daemon-less container. See NOTES-audio-io.md.
-ENV LD_PRELOAD=/usr/local/lib/libpa_stub.so
-
 # Web UI; default config writes KISS ports 8001 and 8002. Custom configs
 # may bind anywhere — use --network=host (or `-p ...`) accordingly.
 EXPOSE 8080 8001 8002
 
-# A non-root user for the running process. samoyed-direwolf doesn't need
-# any capabilities once the LD_PRELOAD shim is in place.
+# A non-root user for the running process.
 RUN useradd --system --no-create-home --shell /usr/sbin/nologin sim
 USER sim
 

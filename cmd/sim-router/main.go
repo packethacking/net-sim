@@ -28,7 +28,6 @@ func main() {
 	verbose := flag.Bool("v", false, "verbose / debug logging")
 	samoyedPath := flag.String("samoyed", "", "path to samoyed-direwolf (default: search $PATH and common install paths)")
 	direwolfPath := flag.String("direwolf", "", "path to direwolf (default: search $PATH)")
-	preloadPath := flag.String("pa-stub", "", "path to libpa_stub.so for LD_PRELOAD (default: search common install paths)")
 	workDir := flag.String("workdir", "", "scratch dir for per-port config files / FIFOs (default: a unique subdir of $TMPDIR)")
 	recordDir := flag.String("record", "", "if set, record all per-port TX and RX audio to a timestamped subdirectory of this path")
 	flag.Parse()
@@ -65,20 +64,13 @@ func main() {
 		logger.Warn("direwolf not found; ports with tnc=direwolf won't start", "err", direwolfErr)
 	}
 
-	stub, err := resolvePreload(*preloadPath)
-	if err != nil {
-		logger.Error("locate libpa_stub.so", "err", err)
-		logger.Error("if missing, build with: gcc -shared -fPIC -o /usr/local/lib/libpa_stub.so preload/pa_stub.c")
-		os.Exit(1)
-	}
-
 	wd, err := resolveWorkDir(*workDir)
 	if err != nil {
 		logger.Error("workdir", "err", err)
 		os.Exit(1)
 	}
 
-	logger.Info("starting", "config", *cfgPath, "samoyed", samoyedBin, "direwolf", direwolfBin, "preload", stub, "workdir", wd)
+	logger.Info("starting", "config", *cfgPath, "samoyed", samoyedBin, "direwolf", direwolfBin, "workdir", wd)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -86,7 +78,6 @@ func main() {
 	r, err := router.Start(ctx, cfg, router.Options{
 		SamoyedBin:    samoyedBin,
 		DirewolfBin:   direwolfBin,
-		PreloadPath:   stub,
 		WorkDir:       wd,
 		Verbose:       *verbose,
 		Logger:        logger,
@@ -150,24 +141,6 @@ func resolveDirewolf(explicit string) (string, error) {
 		}
 	}
 	return "", errors.New("direwolf not found in $PATH or common locations")
-}
-
-func resolvePreload(explicit string) (string, error) {
-	if explicit != "" {
-		if _, err := os.Stat(explicit); err != nil {
-			return "", err
-		}
-		return explicit, nil
-	}
-	for _, p := range []string{
-		"/usr/local/lib/libpa_stub.so",
-		"/opt/sim/preload/libpa_stub.so",
-	} {
-		if _, err := os.Stat(p); err == nil {
-			return p, nil
-		}
-	}
-	return "", errors.New("libpa_stub.so not found")
 }
 
 func resolveWorkDir(explicit string) (string, error) {

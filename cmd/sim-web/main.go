@@ -63,7 +63,6 @@ func main() {
 	cfgPath := flag.String("config", "network.yaml", "path to the network YAML")
 	samoyed := flag.String("samoyed", "", "samoyed-direwolf binary (default: discover)")
 	direwolf := flag.String("direwolf", "", "direwolf binary (default: discover)")
-	preload := flag.String("pa-stub", "", "libpa_stub.so for LD_PRELOAD (default: discover)")
 	workDir := flag.String("workdir", "", "scratch dir for per-port config files / FIFOs (default: temp)")
 	autostart := flag.Bool("autostart", false, "start the router immediately on launch")
 	recordDir := flag.String("record", "", "if set, enables the Record toggle in the UI; recordings land in timestamped subdirectories of this path")
@@ -85,16 +84,11 @@ func main() {
 	if direwolfBin == "" {
 		logger.Warn("direwolf not found; ports with tnc=direwolf won't start")
 	}
-	stub, err := resolvePreload(*preload)
-	if err != nil {
-		logger.Warn("libpa_stub.so not found at startup; you'll need it before you can Start", "err", err)
-	}
 
 	app := &app{
 		cfgPath:     *cfgPath,
 		samoyedBin:  samoyedBin,
 		direwolfBin: direwolfBin,
-		preload:     stub,
 		workDir:     *workDir,
 		recordBase:  *recordDir,
 		logger:      logger,
@@ -157,7 +151,6 @@ type app struct {
 	cfgPath     string
 	samoyedBin  string
 	direwolfBin string
-	preload     string
 	workDir     string
 	recordBase  string // -record DIR; "" means feature disabled
 	logger      *slog.Logger
@@ -458,15 +451,6 @@ func (a *app) start() error {
 			a.direwolfBin = bin
 		}
 	}
-	if a.preload == "" {
-		stub, err := resolvePreload("")
-		if err != nil {
-			a.lastErr = err.Error()
-			a.lastTime = time.Now()
-			return err
-		}
-		a.preload = stub
-	}
 	cfg, err := config.Load(a.cfgPath)
 	if err != nil {
 		a.lastErr = err.Error()
@@ -478,7 +462,6 @@ func (a *app) start() error {
 	r, err := router.Start(ctx, cfg, router.Options{
 		SamoyedBin:    a.samoyedBin,
 		DirewolfBin:   a.direwolfBin,
-		PreloadPath:   a.preload,
 		WorkDir:       a.workDir,
 		Logger:        a.logger,
 		RecordDir:     a.recordBase,
@@ -557,23 +540,5 @@ func resolveDirewolf(explicit string) (string, error) {
 		}
 	}
 	return "", errors.New("direwolf not found in $PATH or common locations")
-}
-
-func resolvePreload(explicit string) (string, error) {
-	if explicit != "" {
-		if _, err := os.Stat(explicit); err != nil {
-			return "", err
-		}
-		return explicit, nil
-	}
-	for _, p := range []string{
-		"/usr/local/lib/libpa_stub.so",
-		"/opt/sim/preload/libpa_stub.so",
-	} {
-		if _, err := os.Stat(p); err == nil {
-			return p, nil
-		}
-	}
-	return "", errors.New("libpa_stub.so not found")
 }
 

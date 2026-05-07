@@ -58,9 +58,6 @@ func startSamoyed(ctx context.Context, s Spec) (*Child, error) {
 	args := []string{"-c", confPath, "-t", "0", "-q", "dh"}
 
 	cmd := exec.CommandContext(ctx, s.SamoyedBin, args...)
-	if s.PreloadPath != "" {
-		cmd.Env = append(os.Environ(), "LD_PRELOAD="+s.PreloadPath)
-	}
 	cmd.Stdout = newPrefixWriter(os.Stderr, "["+s.NodeID+"."+s.PortID+"] ")
 	cmd.Stderr = cmd.Stdout
 

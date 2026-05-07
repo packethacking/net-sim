@@ -53,7 +53,6 @@ type Spec struct {
 
 	SamoyedBin  string // path to samoyed-direwolf
 	DirewolfBin string // path to direwolf
-	PreloadPath string // libpa_stub.so for LD_PRELOAD (samoyed only)
 	WorkDir     string // scratch dir for per-port config files (and FIFOs, for direwolf)
 }
 

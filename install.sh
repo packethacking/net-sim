@@ -76,11 +76,6 @@ step "Cloning / updating net-sim → $SIM_DIR"
 sync_repo "$SIM_DIR" "$SIM_REPO" "$SIM_REF"
 note "net-sim: $(git -C "$SIM_DIR" rev-parse --short HEAD)"
 
-step "Building libpa_stub.so"
-gcc -shared -fPIC -o /usr/local/lib/libpa_stub.so "$SIM_DIR/preload/pa_stub.c"
-ldconfig
-note "installed: /usr/local/lib/libpa_stub.so"
-
 step "Building sim-router and sim-web"
 ( cd "$SIM_DIR" && go build -o sim-router ./cmd/sim-router && go build -o sim-web ./cmd/sim-web )
 install -m 0755 "$SIM_DIR/sim-router" /usr/local/bin/sim-router
@@ -109,9 +104,6 @@ Type=simple
 ExecStart=/usr/local/bin/sim-web -addr :${WEB_PORT} -config ${NETWORK_YAML}
 Restart=on-failure
 RestartSec=2
-# sim-web's children (samoyed-direwolf) need the LD_PRELOAD shim to
-# bypass PortAudio init in headless environments.
-Environment=LD_PRELOAD=/usr/local/lib/libpa_stub.so
 
 [Install]
 WantedBy=multi-user.target

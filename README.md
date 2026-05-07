@@ -99,8 +99,7 @@ curl -fsSL https://raw.githubusercontent.com/packethacking/net-sim/main/install.
 ```
 
 That script installs apt build-deps, clones and builds samoyed at
-`/opt/samoyed`, clones and builds net-sim at `/opt/sim`, drops the
-LD_PRELOAD shim into `/usr/local/lib/libpa_stub.so`, installs the
+`/opt/samoyed`, clones and builds net-sim at `/opt/sim`, installs the
 binaries to `/usr/local/bin/`, bootstraps a default two-node network at
 `/etc/sim/network.yaml`, and (where systemd is present) registers and
 starts a `sim-web.service` listening on `:8080`.
@@ -120,8 +119,9 @@ Override knobs (set as env vars before `sudo bash`):
 | `SIM_REF` / `SAMOYED_REF` | `main` | git ref to check out |
 
 The script is idempotent — re-run it to update to a newer `main`. It
-does **not** install pulseaudio / pipewire / jackd; the LD_PRELOAD shim
-keeps PortAudio happy without a sound stack (see `NOTES-audio-io.md`).
+does **not** install pulseaudio / pipewire / jackd; samoyed initialises
+PortAudio lazily so a daemon-less host works fine (see
+`NOTES-audio-io.md`).
 
 ## Web UI
 
@@ -165,7 +165,7 @@ Prerequisites (Debian/Ubuntu):
 Build:
 
 ```
-make build       # builds sim-router, sim-web, and /usr/local/lib/libpa_stub.so
+make build       # builds sim-router and sim-web
 ```
 
 Run the smallest demo:
@@ -249,7 +249,7 @@ ports:
 
 | `tnc` | Audio TX path | Notes |
 |---|---|---|
-| `samoyed` (default) | UDP datagrams | Clean and direct. Needs the LD_PRELOAD shim against PortAudio init. |
+| `samoyed` (default) | UDP datagrams | Clean and direct. |
 | `direwolf` | ALSA `file` plugin → named pipe | Workaround until upstream Dire Wolf gains UDP audio out. The router writes a per-port `.asoundrc` and a FIFO into `WorkDir`. |
 
 Both backends accept the same modem directives (`MODEM 9600`, `IL2PTX 1`,
@@ -400,7 +400,6 @@ internal/audio/            - PCM types, FM-capture mixer, noise generator,
                              WAV recorder
 internal/router/           - topology, audio routing, glue
 configs/                   - demo topology YAMLs
-preload/pa_stub.c          - 6-line LD_PRELOAD shim for libportaudio
 install.sh                 - curl | sudo bash installer
 NOTES-audio-io.md          - Phase 1 findings (essential reading if you
                              want to understand why we use stdin + UDP)
