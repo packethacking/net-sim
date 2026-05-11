@@ -6,6 +6,60 @@ import (
 	"testing"
 )
 
+// TestAddNoiseQuietedThreshold checks the FM-quieting model: silent
+// block in → noise out at the configured level (idle hiss). Loud
+// signal block in → noise output substantially attenuated. Weak
+// signal (below quieting margin) → noise unchanged.
+func TestAddNoiseQuietedThreshold(t *testing.T) {
+	m := NewMixer(6, false, "silence")
+
+	idle := Silence()
+	m.AddNoiseQuieted(idle, 22) // floor only
+	floor := rms(idle)
+	if floor < 1500 || floor > 4500 {
+		t.Errorf("idle floor rms %.0f, want ~2600 (noiseDB=22)", floor)
+	}
+
+	// Loud carrier (~−1 dB FS sine-ish): fill block with alternating
+	// ±29000 samples → peak ~29000, SNR ≈ 21 dB above the 22 dB floor.
+	loud := make(Block, BlockBytes)
+	for i := 0; i+1 < len(loud); i += 2 {
+		v := int16(29000)
+		if (i/2)%2 == 0 {
+			v = -v
+		}
+		loud[i] = byte(uint16(v))
+		loud[i+1] = byte(uint16(v) >> 8)
+	}
+	loudBefore := rms(loud)
+	m.AddNoiseQuieted(loud, 22)
+	loudAfter := rms(loud)
+	delta := loudAfter - loudBefore
+	if delta > 600 {
+		t.Errorf("loud signal: noise added rms ~%.0f, want quieted (< 600 added)", delta)
+	}
+
+	// Weak signal (peak ~3000, SNR ~1 dB above noise): noise should
+	// be roughly the same as the idle floor (no significant quieting).
+	weak := make(Block, BlockBytes)
+	for i := 0; i+1 < len(weak); i += 2 {
+		v := int16(3000)
+		if (i/2)%2 == 0 {
+			v = -v
+		}
+		weak[i] = byte(uint16(v))
+		weak[i+1] = byte(uint16(v) >> 8)
+	}
+	weakBefore := rms(weak)
+	m.AddNoiseQuieted(weak, 22)
+	weakAfter := rms(weak)
+	// RMS adds in quadrature, so weakAfter² ≈ weakBefore² + floor².
+	expected := math.Sqrt(weakBefore*weakBefore + floor*floor)
+	if math.Abs(weakAfter-expected) > 800 {
+		t.Errorf("weak signal noise: got rms %.0f, want ~%.0f (no quieting)", weakAfter, expected)
+	}
+}
+
 // TestAddNoiseConcurrent is a regression test: every receiver goroutine
 // in the router calls Mixer.AddNoise on the same *Mixer. Pre-fix the
 // shared *rand.Rand was unprotected and panicked under load
