@@ -84,6 +84,13 @@ type Port struct {
 	// (samoyed → UDP, direwolf → ALSA file-plugin into a FIFO,
 	// because stock Dire Wolf still has no UDP audio out).
 	TNC TNCBackend `yaml:"tnc,omitempty"`
+
+	// NoiseDB overrides the global DefaultNoiseDB for this port's
+	// receiver. Positive value = dB below full-scale (quieter); 0 or
+	// negative = inherit the global default. Use higher values for
+	// "quiet RX site" (less noise floor) and lower values for "noisy
+	// urban environment".
+	NoiseDB float64 `yaml:"noise_db,omitempty"`
 }
 
 // TNCBackend names the TNC implementation.
@@ -141,6 +148,13 @@ type Config struct {
 	MixerMode     MixerMode     `yaml:"mixer_mode,omitempty"`
 	CaptureDB     float64       `yaml:"capture_db,omitempty"`
 	CollisionMode CollisionMode `yaml:"collision_mode,omitempty"`
+
+	// DefaultNoiseDB is the band-noise floor heard by every receiver
+	// unless its Port.NoiseDB overrides it. Positive value = dB below
+	// full-scale (quieter). Models the "FM band hiss" you'd hear on
+	// any real radio with the squelch open. Zero or negative = no
+	// global floor (back to the old per-link-only behaviour).
+	DefaultNoiseDB float64 `yaml:"default_noise_db,omitempty"`
 
 	Nodes []Node `yaml:"nodes"`
 	Links []Link `yaml:"links"`
