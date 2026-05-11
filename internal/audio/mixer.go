@@ -4,6 +4,7 @@ import (
 	"math"
 	"math/rand"
 	"sort"
+	"sync"
 )
 
 // MixDecision describes what the mixer chose to emit, for verbose logging.
@@ -46,7 +47,11 @@ type Mixer struct {
 	CollisionMode string // "silence" | "sum" | "noise"
 	LinearSum     bool   // true = SSB stub mode
 
-	rng *rand.Rand
+	// rng is the noise source for AddNoise. *rand.Rand is NOT
+	// goroutine-safe; rxFeeder goroutines call AddNoise concurrently,
+	// so all access is serialised behind rngMu.
+	rngMu sync.Mutex
+	rng   *rand.Rand
 }
 
 // NewMixer constructs a mixer. captureDB defaults to 6 if zero.
@@ -151,6 +156,12 @@ func (m *Mixer) AddNoise(b Block, noiseDB float64) {
 		return
 	}
 	sigma := AmplitudeFromDB(noiseDB) * float64(math.MaxInt16)
+	// *rand.Rand is not goroutine-safe and many rxFeeder goroutines
+	// call AddNoise concurrently. Take the lock for the duration of
+	// one block — a few hundred RNG calls — rather than once per
+	// sample, to keep contention low.
+	m.rngMu.Lock()
+	defer m.rngMu.Unlock()
 	for i := 0; i+1 < len(b); i += 2 {
 		s := int16(uint16(b[i]) | uint16(b[i+1])<<8)
 		n := m.rng.NormFloat64() * sigma
