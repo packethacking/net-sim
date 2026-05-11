@@ -2,8 +2,32 @@ package audio
 
 import (
 	"math"
+	"sync"
 	"testing"
 )
+
+// TestAddNoiseConcurrent is a regression test: every receiver goroutine
+// in the router calls Mixer.AddNoise on the same *Mixer. Pre-fix the
+// shared *rand.Rand was unprotected and panicked under load
+// ("index out of range [-1]" inside math/rand). Race-detector enabled
+// at CI catches the data race even without a panic.
+func TestAddNoiseConcurrent(t *testing.T) {
+	m := NewMixer(6, false, "silence")
+	const goroutines = 16
+	const iterations = 200
+	var wg sync.WaitGroup
+	for g := 0; g < goroutines; g++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for i := 0; i < iterations; i++ {
+				blk := Silence()
+				m.AddNoise(blk, 18)
+			}
+		}()
+	}
+	wg.Wait()
+}
 
 // rms computes root-mean-square sample value (0..32768).
 func rms(b Block) float64 {
