@@ -324,7 +324,7 @@ body.flash { filter: brightness(2.2); }
           <td class="lbl">COL</td><td class="num" id="stat-col">0</td></tr>
       <tr><td class="lbl">CHANS</td><td class="num" id="stat-chans">––</td>
           <td class="lbl">CAP</td><td class="num" id="stat-cap">0</td></tr>
-      <tr><td class="lbl" colspan="3">HOST CPU</td>
+      <tr><td class="lbl" id="stat-cpu-lbl" colspan="3">SIM CPU</td>
           <td class="num" colspan="1" id="stat-cpu" style="text-align:right">––</td></tr>
     </table>
     <!-- CPU sparkline + numeric overlay -->
@@ -388,9 +388,87 @@ function canonicalKey(a, b) { return a < b ? a + '|' + b : b + '|' + a; }
 // anything that already carries an SSID pass through unchanged.
 function stationDisplayCall(id) {
   if (!id) return id;
-  if (id.includes('-')) return id;                          // already has SSID
-  if (/^Q[A-Z]\d[A-Z]{3,4}$/.test(id)) return id + '-7';    // synthetic test call
+  if (id.includes('-')) return id;
+  if (isExternalStation(id)) return id;                     // don't fake-SSID it
+  if (/^Q[A-Z]\d[A-Z]{3,4}$/.test(id)) return id + '-7';
   return id;
+}
+
+// External attach points — KISS ports exposed for real packet nodes to
+// plug into. Detected by id pattern; the operator's network can name
+// them however they like. (TODO: support an explicit `external: true`
+// metadata bit per node in network.yaml.)
+function isExternalStation(id) {
+  return /^(USEREXT|EXT[\w_-]*|USER[\w_-]*)$/.test(id);
+}
+
+function renderRegularStation(s) {
+  const g = el('g', { transform: `translate(${s.x}, ${s.y})` }, layers.stations);
+  el('rect', { x: -6, y: -6, width: 12, height: 12,
+    fill: 'none', stroke: '#4ddc97', 'stroke-opacity': '0.55',
+    'stroke-width': '0.8', filter: 'url(#hot-glow)' }, g);
+  el('rect', { x: -6, y: -6, width: 12, height: 12,
+    fill: 'none', stroke: '#4ddc97', 'stroke-opacity': '0.45',
+    'stroke-width': '0.8', transform: 'rotate(45)' }, g);
+  el('circle', { cx: 0, cy: 0, r: 1.5,
+    fill: '#7effc1', filter: 'url(#hot-glow)' }, g);
+  const lbl = el('text', {
+    x: s.x, y: s.y + 22,
+    'text-anchor': 'middle',
+    class: 'station-label',
+  }, layers.labels);
+  lbl.textContent = stationDisplayCall(s.id);
+}
+
+// External attach: amber double-diamond + radial spikes (an "antenna
+// in the wild") + an "EXTERNAL" caption above the id.
+function renderExternalStation(s) {
+  const g = el('g', { transform: `translate(${s.x}, ${s.y})` }, layers.stations);
+  // outer diamond
+  const D = 10;
+  el('path', {
+    d: `M 0 ${-D} L ${D} 0 L 0 ${D} L ${-D} 0 Z`,
+    fill: 'none', stroke: '#ffb066',
+    'stroke-opacity': '0.9', 'stroke-width': '1.1',
+    filter: 'url(#hot-glow)',
+  }, g);
+  // inner smaller diamond
+  el('path', {
+    d: `M 0 ${-5} L 5 0 L 0 5 L -5 0 Z`,
+    fill: 'none', stroke: '#ffd76a',
+    'stroke-opacity': '0.85', 'stroke-width': '0.8',
+  }, g);
+  // radial spikes — four short ticks pointing outward at the diagonals
+  for (const a of [Math.PI*0.25, Math.PI*0.75, Math.PI*1.25, Math.PI*1.75]) {
+    const x1 = Math.cos(a) * 9, y1 = Math.sin(a) * 9;
+    const x2 = Math.cos(a) * 14, y2 = Math.sin(a) * 14;
+    el('line', { x1, y1, x2, y2,
+      stroke: '#ffd76a', 'stroke-opacity': '0.7',
+      'stroke-width': '0.8',
+      filter: 'url(#hot-glow)',
+    }, g);
+  }
+  // centre dot — brighter than regular stations
+  el('circle', { cx: 0, cy: 0, r: 2,
+    fill: '#ffe066', filter: 'url(#loud-glow)' }, g);
+
+  // EXTERNAL caption above the id (kept tight so the cluster still reads).
+  const cap = el('text', {
+    x: s.x, y: s.y - 22,
+    'text-anchor': 'middle',
+    class: 'station-label',
+    fill: '#ffb066',
+    style: 'font-size: 9px; letter-spacing: 3px; opacity: 0.85;',
+  }, layers.labels);
+  cap.textContent = 'EXTERNAL';
+
+  const lbl = el('text', {
+    x: s.x, y: s.y + 24,
+    'text-anchor': 'middle',
+    class: 'station-label',
+    fill: '#ffd76a',
+  }, layers.labels);
+  lbl.textContent = stationDisplayCall(s.id);
 }
 function modeColor(mode) {
   if (mode === 'il2p')     return '#c896ff';
@@ -760,31 +838,20 @@ function renderStatic() {
     lbl.textContent = display;
   }
 
-  // Stations — concentric octagon (hollow) + corner ticks, gives a
-  // "facility" feel. Cheaper than a real polygon: just stack two
-  // squares rotated 45°. NB: SVG presentation attributes don't resolve
-  // CSS var() — must use literal colours here.
+  // Stations. Two styles:
+  //   * regular synthetic stations → concentric hollow octagon
+  //     (two rotated squares + centre dot) in phosphor green.
+  //   * external attach points (USEREXT, EXT*, USER*) → amber
+  //     diamond ring + radial spikes + an "EXTERNAL" caption.
+  //     These represent ports exposed for real packet nodes to
+  //     plug into, so they need to read as distinct from any
+  //     simulated station.
   for (const s of state.nodes.values()) {
-    const g = el('g', { transform: `translate(${s.x}, ${s.y})` }, layers.stations);
-    el('rect', { x: -6, y: -6, width: 12, height: 12,
-      fill: 'none', stroke: '#4ddc97', 'stroke-opacity': '0.55',
-      'stroke-width': '0.8', filter: 'url(#hot-glow)' }, g);
-    el('rect', { x: -6, y: -6, width: 12, height: 12,
-      fill: 'none', stroke: '#4ddc97', 'stroke-opacity': '0.45',
-      'stroke-width': '0.8', transform: 'rotate(45)' }, g);
-    el('circle', { cx: 0, cy: 0, r: 1.5,
-      fill: '#7effc1', filter: 'url(#hot-glow)' }, g);
-
-    // Station label below the box. Append "-7" if the id looks like a
-    // synthetic test callsign (Q-prefix, no existing SSID) — the only
-    // way to render the AX.25 address users actually connect with,
-    // until we have an optional `callsign:` field in the YAML. TODO.
-    const lbl = el('text', {
-      x: s.x, y: s.y + 22,
-      'text-anchor': 'middle',
-      class: 'station-label',
-    }, layers.labels);
-    lbl.textContent = stationDisplayCall(s.id);
+    if (isExternalStation(s.id)) {
+      renderExternalStation(s);
+    } else {
+      renderRegularStation(s);
+    }
   }
 
   // Ports.
@@ -1162,19 +1229,23 @@ function renderCPUSpark() {
   cpuSparkSvg.setAttribute('viewBox', `0 0 ${w} ${h}`);
   cpuSparkSvg.innerHTML = '';
   if (cpuHist.length === 0) return;
-  // Bars rather than a line — reads more clearly at this size and
-  // matches the HUD's monospace blockiness.
+  // Auto-scale: floor at 100% so an idle network still shows a
+  // sensible Y range, but grow if sim CPU has been higher (multi-core
+  // hosts often sum past 100%). Colour thresholds remain proportional
+  // to the scale so the meaning stays consistent.
+  const peak = Math.max(100, ...cpuHist.filter(isFinite));
   const bw = w / CPU_HIST_LEN;
   const off = CPU_HIST_LEN - cpuHist.length;
   for (let i = 0; i < cpuHist.length; i++) {
     const v = cpuHist[i];
     if (!isFinite(v)) continue;
-    const bh = Math.max(1, (v / 100) * (h - 1));
+    const frac = Math.min(1, v / peak);
+    const bh = Math.max(1, frac * (h - 1));
     const x  = (i + off) * bw;
     const y  = h - bh;
-    let col = '#4ddc97';                    // green: relaxed
-    if (v >= 60) col = '#ffb066';           // amber: noticeable
-    if (v >= 85) col = '#ff5d6a';           // red:   slammed
+    let col = '#4ddc97';
+    if (frac >= 0.6)  col = '#ffb066';
+    if (frac >= 0.85) col = '#ff5d6a';
     const r = document.createElementNS(SVG_NS, 'rect');
     r.setAttribute('x', x.toFixed(2));
     r.setAttribute('y', y.toFixed(2));
@@ -1184,24 +1255,36 @@ function renderCPUSpark() {
     r.setAttribute('opacity', '0.85');
     cpuSparkSvg.appendChild(r);
   }
-  // Tick line at 50% for a baseline reference.
-  const half = document.createElementNS(SVG_NS, 'line');
-  half.setAttribute('x1', 0); half.setAttribute('x2', w);
-  half.setAttribute('y1', h / 2); half.setAttribute('y2', h / 2);
-  half.setAttribute('stroke', 'rgba(78,220,169,0.18)');
-  half.setAttribute('stroke-dasharray', '2 4');
-  cpuSparkSvg.appendChild(half);
+  // Reference line at the floor (100%) — tells you at a glance when
+  // the spark range has had to expand past one full CPU.
+  const ref = (1 - 100 / peak) * h;
+  const refLine = document.createElementNS(SVG_NS, 'line');
+  refLine.setAttribute('x1', 0); refLine.setAttribute('x2', w);
+  refLine.setAttribute('y1', ref); refLine.setAttribute('y2', ref);
+  refLine.setAttribute('stroke', 'rgba(78,220,169,0.18)');
+  refLine.setAttribute('stroke-dasharray', '2 4');
+  cpuSparkSvg.appendChild(refLine);
 }
 
 async function pollCPU() {
   try {
     const r = await fetch('/api/stats', { cache: 'no-store' });
     const j = await r.json();
-    const v = j.host_cpu_pct;
+    // Prefer sim_cpu_pct (sum across all sim containers, requires the
+    // host's docker.sock mounted into netsim). Fall back to host total
+    // if we can't reach the daemon — labelled so the operator knows
+    // which one they're looking at.
+    let v, label;
+    if (isFinite(j.sim_cpu_pct)) {
+      v = j.sim_cpu_pct;  label = 'SIM CPU';
+    } else if (isFinite(j.host_cpu_pct)) {
+      v = j.host_cpu_pct; label = 'HOST CPU';
+    }
     if (isFinite(v)) {
       cpuHist.push(v);
       if (cpuHist.length > CPU_HIST_LEN) cpuHist.shift();
       $('stat-cpu').textContent = v.toFixed(0) + '%';
+      $('stat-cpu-lbl').textContent = label;
     }
   } catch {}
   renderCPUSpark();

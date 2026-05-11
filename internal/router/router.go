@@ -48,10 +48,14 @@ import (
 // encoder leaves behind, well below modulator full-scale.
 const txActiveThreshold = 1500
 
-// txSilenceBlocks debounces TX end. samoyed leaves brief gaps between
-// preamble, frame, and postamble; we don't want to fire tx_end → tx_start
-// for those. 10 blocks at 441 samples / 44100 Hz = 100 ms.
-const txSilenceBlocks = 10
+// txSilenceWindow is the wall-clock idle gap after which a tx_end event
+// fires. We use a wall-clock watchdog rather than counting silent
+// blocks because samoyed stops sending UDP datagrams entirely at burst
+// end (rather than streaming silence), so block-count silence detection
+// would never advance after the last audible block. 200 ms is long
+// enough to bridge the inter-frame gaps inside a multi-frame burst
+// without falsely closing keying, short enough to mark "key up" cleanly.
+const txSilenceWindow = 200 * time.Millisecond
 
 // Options configures a Router. All paths default to "look up on $PATH".
 type Options struct {
@@ -107,8 +111,22 @@ type Router struct {
 	session  atomic.Pointer[recordSession]
 	recordMu sync.Mutex
 
+	// txTrackers — one per port — record the wall-clock time of each
+	// port's last above-threshold TX block. The txWatchdog goroutine
+	// fires tx_end when a tracker hasn't been bumped within
+	// txSilenceWindow. Populated at Start; pointers are stable.
+	txTrackers map[config.PortRef]*txTracker
+
 	cancel context.CancelFunc
 	wg     sync.WaitGroup
+}
+
+// txTracker carries the wall-clock TX-active state for one port,
+// shared by the port's txReader (writes lastBusyNanos / sets active)
+// and the txWatchdog (clears active on staleness).
+type txTracker struct {
+	active        atomic.Bool
+	lastBusyNanos atomic.Int64
 }
 
 // linkQueue is one source→destination link's audio buffer. The capacity
@@ -190,6 +208,7 @@ func Start(ctx context.Context, cfg *config.Config, opts Options) (*Router, erro
 		children:   map[config.PortRef]*tnc.Child{},
 		linkQueues: map[config.PortRef][]*linkQueue{},
 		rxLinks:    map[config.PortRef][]*linkQueue{},
+		txTrackers: map[config.PortRef]*txTracker{},
 		cancel:     cancel,
 	}
 
@@ -244,6 +263,11 @@ func Start(ctx context.Context, cfg *config.Config, opts Options) (*Router, erro
 		}
 	}
 
+	// One tx tracker per port — pointers are stable across the run.
+	for ref := range r.children {
+		r.txTrackers[ref] = &txTracker{}
+	}
+
 	for ref, child := range r.children {
 		ref := ref
 		child := child
@@ -256,6 +280,13 @@ func Start(ctx context.Context, cfg *config.Config, opts Options) (*Router, erro
 			defer r.wg.Done()
 			r.rxFeeder(rctx, ref, child.Stdin())
 		}()
+		if opts.EventBus != nil {
+			r.wg.Add(1)
+			go func() {
+				defer r.wg.Done()
+				r.txWatchdog(rctx, ref)
+			}()
+		}
 	}
 
 	for ref, child := range r.children {
@@ -375,29 +406,14 @@ func (r *Router) txReader(ctx context.Context, ref config.PortRef, c *tnc.Child)
 	src := c.TXAudio()
 	buf := make([]byte, 4096)
 	pending := make([]byte, 0, audio.BlockBytes*4)
-	outgoing := r.linkQueues[ref] // empty slice if this port has no outgoing links
-
-	// Per-port TX state for event emission. Owned by this goroutine, so
-	// no synchronisation needed. active flips true on the first block
-	// above the active threshold and false after txSilenceBlocks
-	// consecutive quiet blocks.
-	var (
-		active     bool
-		quietCount int
-	)
+	outgoing := r.linkQueues[ref]   // empty slice if this port has no outgoing links
+	tt := r.txTrackers[ref]         // may be nil only if Start partially failed
 
 	for {
 		n, err := src.Read(buf)
 		if err != nil {
 			// EOF / closed-during-shutdown is the normal exit path.
 			if ctx.Err() != nil || errors.Is(err, io.EOF) || errors.Is(err, net.ErrClosed) {
-				if active && r.opts.EventBus != nil {
-					r.opts.EventBus.Publish(events.Event{
-						T:    time.Now(),
-						Type: events.TXEnd,
-						Port: ref.String(),
-					})
-				}
 				return
 			}
 			r.logger.Debug("tx audio read error", "port", ref, "err", err)
@@ -415,28 +431,18 @@ func (r *Router) txReader(ctx context.Context, ref config.PortRef, c *tnc.Child)
 			if r.opts.Verbose {
 				r.logger.Debug("tx block", "port", ref, "peak", peak, "outgoing", len(outgoing))
 			}
-			if r.opts.EventBus != nil {
-				if peak >= txActiveThreshold {
-					if !active {
-						active = true
-						r.opts.EventBus.Publish(events.Event{
-							T:    time.Now(),
-							Type: events.TXStart,
-							Port: ref.String(),
-							Peak: peak,
-						})
-					}
-					quietCount = 0
-				} else if active {
-					quietCount++
-					if quietCount >= txSilenceBlocks {
-						active = false
-						r.opts.EventBus.Publish(events.Event{
-							T:    time.Now(),
-							Type: events.TXEnd,
-							Port: ref.String(),
-						})
-					}
+			// Bump the TX tracker on every active block; the watchdog
+			// goroutine emits tx_start (first bump) and tx_end (after
+			// txSilenceWindow with no further bumps).
+			if r.opts.EventBus != nil && tt != nil && peak >= txActiveThreshold {
+				tt.lastBusyNanos.Store(time.Now().UnixNano())
+				if !tt.active.Swap(true) {
+					r.opts.EventBus.Publish(events.Event{
+						T:    time.Now(),
+						Type: events.TXStart,
+						Port: ref.String(),
+						Peak: peak,
+					})
 				}
 			}
 			if s := r.session.Load(); s != nil {
@@ -445,6 +451,48 @@ func (r *Router) txReader(ctx context.Context, ref config.PortRef, c *tnc.Child)
 			for _, q := range outgoing {
 				q.pushNonBlocking(blk, r.logger)
 			}
+		}
+	}
+}
+
+// txWatchdog fires tx_end after a port has been idle for txSilenceWindow.
+// One goroutine per port; cheap because it sleeps almost all the time.
+// The wall-clock timer is required because samoyed's TX UDP stream
+// stops at end of burst — the txReader's Read blocks indefinitely with
+// no further blocks to evaluate, so we can't drive silence detection
+// from the audio path alone.
+func (r *Router) txWatchdog(ctx context.Context, ref config.PortRef) {
+	tt := r.txTrackers[ref]
+	if tt == nil {
+		return
+	}
+	tick := time.NewTicker(50 * time.Millisecond)
+	defer tick.Stop()
+	emitEnd := func() {
+		// Also fires once during shutdown for any port that was keyed at
+		// the moment ctx cancelled — visualiser then doesn't end with
+		// stale "TX active" state.
+		if tt.active.CompareAndSwap(true, false) && r.opts.EventBus != nil {
+			r.opts.EventBus.Publish(events.Event{
+				T:    time.Now(),
+				Type: events.TXEnd,
+				Port: ref.String(),
+			})
+		}
+	}
+	for {
+		select {
+		case <-ctx.Done():
+			emitEnd()
+			return
+		case <-tick.C:
+		}
+		if !tt.active.Load() {
+			continue
+		}
+		last := tt.lastBusyNanos.Load()
+		if time.Since(time.Unix(0, last)) >= txSilenceWindow {
+			emitEnd()
 		}
 	}
 }
