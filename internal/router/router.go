@@ -82,6 +82,12 @@ type Options struct {
 	// non-blocking, so leaving the bus attached but unsubscribed is
 	// cheap. See the events package.
 	EventBus *events.Bus
+
+	// AudioTap, if non-nil, receives raw PCM blocks from the TX and RX
+	// audio paths, keyed by "<node>.<port>|tx" or "<node>.<port>|rx".
+	// Per-block Publish is a no-op when nobody's subscribed to a key,
+	// so leaving the tap attached is cheap.
+	AudioTap *audio.Tap
 }
 
 // Router is the running simulator.
@@ -448,6 +454,12 @@ func (r *Router) txReader(ctx context.Context, ref config.PortRef, c *tnc.Child)
 			if s := r.session.Load(); s != nil {
 				s.WriteTX(ref, blk)
 			}
+			if r.opts.AudioTap != nil {
+				key := ref.String() + "|tx"
+				if r.opts.AudioTap.HasSubscribers(key) {
+					r.opts.AudioTap.Publish(key, blk)
+				}
+			}
 			for _, q := range outgoing {
 				q.pushNonBlocking(blk, r.logger)
 			}
@@ -595,6 +607,12 @@ func (r *Router) rxFeeder(ctx context.Context, dst config.PortRef, stdin io.Writ
 
 		if s := r.session.Load(); s != nil {
 			s.WriteRX(dst, blk)
+		}
+		if r.opts.AudioTap != nil {
+			key := dst.String() + "|rx"
+			if r.opts.AudioTap.HasSubscribers(key) {
+				r.opts.AudioTap.Publish(key, blk)
+			}
 		}
 
 		if _, err := stdin.Write(blk); err != nil {

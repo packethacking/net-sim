@@ -29,6 +29,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/packethacking/net-sim/internal/audio"
 	"github.com/packethacking/net-sim/internal/config"
 	"github.com/packethacking/net-sim/internal/events"
 	"github.com/packethacking/net-sim/internal/router"
@@ -95,6 +96,7 @@ func main() {
 		recordBase:  *recordDir,
 		logger:      logger,
 		eventBus:    events.NewBus(),
+		audioTap:    audio.NewTap(),
 	}
 
 	tmpl, err := template.ParseFS(assets, "index.html")
@@ -115,6 +117,7 @@ func main() {
 	mux.HandleFunc("/", app.handleIndex)
 	mux.HandleFunc("/map", app.handleMap)
 	mux.HandleFunc("/api/events", app.handleEvents)
+	mux.HandleFunc("/api/audio", app.handleAudio)
 	mux.HandleFunc("/api/config", app.handleConfig)
 	mux.HandleFunc("/api/topology", app.handleTopology)
 	mux.HandleFunc("/api/stats", app.handleStats)
@@ -171,6 +174,7 @@ type app struct {
 	mapTmpl     *template.Template
 
 	eventBus *events.Bus
+	audioTap *audio.Tap
 
 	mu       sync.Mutex
 	router   *router.Router
@@ -586,6 +590,7 @@ func (a *app) start() error {
 		RecordDir:     a.recordBase,
 		RecordOnStart: a.recordEnabled && a.recordBase != "",
 		EventBus:      a.eventBus,
+		AudioTap:      a.audioTap,
 	})
 	if err != nil {
 		cancel()
