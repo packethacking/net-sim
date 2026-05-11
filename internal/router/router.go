@@ -523,6 +523,11 @@ func (r *Router) rxFeeder(ctx context.Context, dst config.PortRef, stdin io.Writ
 
 	links := r.rxLinks[dst] // links *into* this destination
 
+	// Per-port noise floor (the FM band-noise hiss). Looked up once
+	// here because the port + global config don't change at runtime.
+	// Resolution order: Port.NoiseDB → Config.DefaultNoiseDB → 0.
+	portNoise := r.portNoiseFloor(dst)
+
 	// Per-destination RX event state. We emit rx_decision only when the
 	// (decision, source-set) tuple changes since the last block — busy
 	// channels would otherwise generate ~100 events/s/port. lastSources is
@@ -578,10 +583,13 @@ func (r *Router) rxFeeder(ctx context.Context, dst config.PortRef, stdin io.Writ
 			}
 		}
 
-		// Per-link noise summed in *after* the capture decision so noise
-		// on a quieter link doesn't spuriously change which signal wins
-		// capture. PLAN Phase 4.
-		var maxNoise float64
+		// Noise floor — always at least the receiver's own band-noise
+		// (FM band hiss, modelled per-port or via the global default).
+		// Per-link noise still considered so a noisy-medium link can
+		// add more than the receiver's own floor (rare, but supported).
+		// Applied *after* the capture decision so noise doesn't tilt
+		// the capture margin.
+		maxNoise := portNoise
 		for _, tx := range active {
 			if tx.NoiseDB > maxNoise {
 				maxNoise = tx.NoiseDB
@@ -657,6 +665,28 @@ func summariseSources(qs []*linkQueue) (string, []string) {
 		key += "|" + list[i]
 	}
 	return key, list
+}
+
+// portNoiseFloor returns the receiver-side band-noise floor for a
+// port, in dB below full-scale. Port-level NoiseDB overrides the
+// global DefaultNoiseDB; both default to 0 (no global floor — old
+// per-link-only behaviour preserved when neither is set).
+func (r *Router) portNoiseFloor(ref config.PortRef) float64 {
+	for _, n := range r.cfg.Nodes {
+		if n.ID != ref.NodeID {
+			continue
+		}
+		for _, p := range n.Ports {
+			if p.ID != ref.PortID {
+				continue
+			}
+			if p.NoiseDB > 0 {
+				return p.NoiseDB
+			}
+			return r.cfg.DefaultNoiseDB
+		}
+	}
+	return r.cfg.DefaultNoiseDB
 }
 
 func decisionName(d audio.MixDecision) string {
