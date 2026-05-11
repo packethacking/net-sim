@@ -20,6 +20,7 @@ import (
 	"html/template"
 	"io"
 	"log/slog"
+	"math"
 	"net/http"
 	"os"
 	"os/exec"
@@ -209,14 +210,33 @@ func (a *app) handleMap(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// handleStats is a cheap polling endpoint for the live-map HUD. It
-// returns a tiny JSON snapshot — currently just host CPU% — so the
-// page doesn't need a separate SSE channel for slow-changing numbers.
+// handleStats is a cheap polling endpoint for the live-map HUD.
+//
+// Returns:
+//   * sim_cpu_pct  — aggregate CPU% across all containers attached to
+//     any of this container's Docker networks (sum, scaled by online
+//     CPUs). NaN unless /var/run/docker.sock is mounted in.
+//   * host_cpu_pct — host-wide CPU% from /proc/stat. NaN on non-Linux.
+//
+// The visualiser prefers sim_cpu_pct and falls back to host if the
+// daemon socket isn't reachable.
 func (a *app) handleStats(w http.ResponseWriter, _ *http.Request) {
-	cpu := currentCPUPct()
+	// JSON can't encode NaN — use *float64 with nil so the client sees
+	// `"sim_cpu_pct": null` when the metric is unknown (e.g. docker
+	// socket not mounted, or no /proc/stat).
+	finite := func(f float64) *float64 {
+		if math.IsNaN(f) || math.IsInf(f, 0) {
+			return nil
+		}
+		return &f
+	}
 	resp := struct {
-		HostCPUPct float64 `json:"host_cpu_pct"`
-	}{HostCPUPct: cpu}
+		SimCPUPct  *float64 `json:"sim_cpu_pct"`
+		HostCPUPct *float64 `json:"host_cpu_pct"`
+	}{
+		SimCPUPct:  finite(currentSimCPUPct()),
+		HostCPUPct: finite(currentCPUPct()),
+	}
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-store")
 	_ = json.NewEncoder(w).Encode(resp)
