@@ -120,6 +120,7 @@ func main() {
 	mux.HandleFunc("/api/events", app.handleEvents)
 	mux.HandleFunc("/api/audio", app.handleAudio)
 	mux.HandleFunc("/api/observed", app.handleObserved)
+	mux.HandleFunc("/api/peer/", app.handlePeerProxy)
 	mux.HandleFunc("/api/config", app.handleConfig)
 	mux.HandleFunc("/api/topology", app.handleTopology)
 	mux.HandleFunc("/api/stats", app.handleStats)

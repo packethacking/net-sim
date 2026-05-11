@@ -303,6 +303,49 @@ text.port-label {
 #panel-listen {
   bottom: 76px; right: 18px; width: 280px;
 }
+
+#panel-chatbot {
+  top: 200px; right: 18px; width: 240px;
+  display: none;  /* shown only when /api/peer/chatbot/state is reachable */
+}
+#chatbot-status {
+  font-family: var(--font-display);
+  font-size: 22px;
+  letter-spacing: 4px;
+  color: var(--phos-hot);
+  text-shadow: 0 0 8px var(--phos-glow);
+  line-height: 1;
+}
+#chatbot-status.stopped { color: var(--phos-dim); text-shadow: none; }
+#chatbot-status.running { color: var(--amber-hot); text-shadow: 0 0 8px rgba(255,224,102,0.5); }
+#chatbot-detail {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--phos-dim);
+  letter-spacing: 1px;
+  margin-top: 4px;
+  min-height: 1.2em;
+}
+.chatbot-btn {
+  margin-top: 8px;
+  padding: 4px 14px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  letter-spacing: 3px;
+  cursor: pointer;
+  text-transform: uppercase;
+  background: rgba(78,220,169,0.1);
+  border: 1px solid var(--phos);
+  color: var(--phos-hot);
+}
+.chatbot-btn:hover { background: rgba(78,220,169,0.25); }
+.chatbot-btn.stop {
+  background: rgba(255,90,90,0.15);
+  border-color: var(--red);
+  color: var(--red-hot);
+}
+.chatbot-btn.stop:hover { background: rgba(255,90,90,0.3); }
+.chatbot-btn:disabled { opacity: 0.35; cursor: not-allowed; }
 #listen-status {
   font-family: var(--font-display);
   font-size: 18px;
@@ -408,6 +451,16 @@ body.flash { filter: brightness(2.2); }
 <div class="hud" id="panel-log"><div class="frame">
   <div class="header"><span>SIGNAL&nbsp;LOG</span><span class="tag">FIFO&nbsp;40</span></div>
   <div class="body"><div id="log"></div></div>
+</div></div>
+
+<div class="hud" id="panel-chatbot"><div class="frame">
+  <div class="header"><span>CHATBOT</span><span class="tag">peer</span></div>
+  <div class="body">
+    <div id="chatbot-status" class="stopped">— stopped —</div>
+    <div id="chatbot-detail"></div>
+    <button id="chatbot-start" class="chatbot-btn">START</button>
+    <button id="chatbot-stop"  class="chatbot-btn stop" disabled>STOP</button>
+  </div>
 </div></div>
 
 <div class="hud" id="panel-listen"><div class="frame">
@@ -1404,6 +1457,64 @@ async function pollObserved() {
 }
 setInterval(pollObserved, 5000);
 setTimeout(pollObserved, 2000);  // first read shortly after boot
+
+// ============================================================
+// Chatbot peer — start/stop a synthetic-traffic bot if one is
+// deployed alongside us. /api/peer/chatbot/state returns 503 when
+// no chatbot peer exists; we hide the panel in that case.
+// ============================================================
+const chatbotPanel = $('panel-chatbot');
+const chatbotStatus = $('chatbot-status');
+const chatbotDetail = $('chatbot-detail');
+const chatbotStart = $('chatbot-start');
+const chatbotStop  = $('chatbot-stop');
+
+async function pollChatbot() {
+  try {
+    const r = await fetch('/api/peer/chatbot/state', { cache: 'no-store' });
+    if (!r.ok) {
+      // 503 → no chatbot peer; hide the panel quietly.
+      chatbotPanel.style.display = 'none';
+      return;
+    }
+    const j = await r.json();
+    chatbotPanel.style.display = '';
+    applyChatbotState(j);
+  } catch {
+    chatbotPanel.style.display = 'none';
+  }
+}
+
+function applyChatbotState(j) {
+  const running = j.state === 'running';
+  const transition = j.state === 'starting' || j.state === 'stopping';
+  chatbotStatus.textContent = transition ? `— ${j.state} —` : (running ? 'RUNNING' : '— STOPPED —');
+  chatbotStatus.className = running ? 'running' : 'stopped';
+  const connected = (j.connected || []).length;
+  const total = (j.personas || []).length;
+  chatbotDetail.textContent = running
+    ? `${connected}/${total} personas in chat: ${(j.connected || []).join(', ')}`
+    : `${total} personas configured, none connected`;
+  chatbotStart.disabled = running || transition;
+  chatbotStop.disabled  = !running || transition;
+}
+
+async function chatbotPost(path) {
+  chatbotStart.disabled = true;
+  chatbotStop.disabled = true;
+  chatbotDetail.textContent = path === '/start' ? 'starting…' : 'stopping…';
+  try {
+    const r = await fetch('/api/peer/chatbot' + path, { method: 'POST' });
+    const j = await r.json();
+    applyChatbotState(j);
+  } catch (err) {
+    chatbotDetail.textContent = 'failed: ' + err.message;
+  }
+}
+chatbotStart.addEventListener('click', () => chatbotPost('/start'));
+chatbotStop.addEventListener('click',  () => chatbotPost('/stop'));
+setInterval(pollChatbot, 4000);
+setTimeout(pollChatbot, 500);
 
 window.addEventListener('resize', () => { renderStatic(); });
 
