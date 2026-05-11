@@ -97,6 +97,7 @@ func main() {
 		logger:      logger,
 		eventBus:    events.NewBus(),
 		audioTap:    audio.NewTap(),
+		observer:    router.NewObserver(),
 	}
 
 	tmpl, err := template.ParseFS(assets, "index.html")
@@ -118,6 +119,7 @@ func main() {
 	mux.HandleFunc("/map", app.handleMap)
 	mux.HandleFunc("/api/events", app.handleEvents)
 	mux.HandleFunc("/api/audio", app.handleAudio)
+	mux.HandleFunc("/api/observed", app.handleObserved)
 	mux.HandleFunc("/api/config", app.handleConfig)
 	mux.HandleFunc("/api/topology", app.handleTopology)
 	mux.HandleFunc("/api/stats", app.handleStats)
@@ -175,6 +177,7 @@ type app struct {
 
 	eventBus *events.Bus
 	audioTap *audio.Tap
+	observer *router.Observer
 
 	mu       sync.Mutex
 	router   *router.Router
@@ -212,6 +215,25 @@ func (a *app) handleMap(w http.ResponseWriter, r *http.Request) {
 	if err := a.mapTmpl.Execute(w, pageData{ConfigPath: a.cfgPath}); err != nil {
 		a.logger.Error("render map", "err", err)
 	}
+}
+
+// handleObserved exposes what callsigns each port has been observed
+// transmitting under, plus a per-station summary picking out the
+// "routing call" (whichever call broadcasts NODES most often). The
+// visualiser uses this to label stations with their real on-air
+// callsign(s) instead of relying on a regex heuristic against the
+// YAML node id.
+func (a *app) handleObserved(w http.ResponseWriter, _ *http.Request) {
+	resp := struct {
+		Ports    map[string]router.PortObservations `json:"ports"`
+		Stations map[string]router.StationSummary   `json:"stations"`
+	}{
+		Ports:    a.observer.Snapshot(),
+		Stations: a.observer.StationSummaries(),
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
+	_ = json.NewEncoder(w).Encode(resp)
 }
 
 // handleStats is a cheap polling endpoint for the live-map HUD.
@@ -591,6 +613,7 @@ func (a *app) start() error {
 		RecordOnStart: a.recordEnabled && a.recordBase != "",
 		EventBus:      a.eventBus,
 		AudioTap:      a.audioTap,
+		Observer:      a.observer,
 	})
 	if err != nil {
 		cancel()

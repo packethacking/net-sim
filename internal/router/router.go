@@ -88,6 +88,11 @@ type Options struct {
 	// Per-block Publish is a no-op when nobody's subscribed to a key,
 	// so leaving the tap attached is cheap.
 	AudioTap *audio.Tap
+
+	// Observer, if non-nil, scrapes locally-transmitted callsigns
+	// from each TNC's stderr stream. Cheap; the parser only matches
+	// lines containing "[0L]" so the overhead on busy logs is low.
+	Observer *Observer
 }
 
 // Router is the running simulator.
@@ -244,6 +249,9 @@ func Start(ctx context.Context, cfg *config.Config, opts Options) (*Router, erro
 				SamoyedBin:     opts.SamoyedBin,
 				DirewolfBin:    opts.DirewolfBin,
 				WorkDir:        opts.WorkDir,
+			}
+			if opts.Observer != nil {
+				spec.StderrTap = opts.Observer.WriterFor(ref)
 			}
 			// direwolf doesn't use the per-port UDP port. Reserve it
 			// anyway so subsequent samoyed ports get the next one
