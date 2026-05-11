@@ -29,11 +29,12 @@ import (
 	"time"
 
 	"github.com/packethacking/net-sim/internal/config"
+	"github.com/packethacking/net-sim/internal/events"
 	"github.com/packethacking/net-sim/internal/router"
 	"gopkg.in/yaml.v3"
 )
 
-//go:embed index.html
+//go:embed index.html map.html
 var assets embed.FS
 
 const defaultConfigYAML = `# Default two-node AFSK1200 network. Edit and click Apply.
@@ -92,6 +93,7 @@ func main() {
 		workDir:     *workDir,
 		recordBase:  *recordDir,
 		logger:      logger,
+		eventBus:    events.NewBus(),
 	}
 
 	tmpl, err := template.ParseFS(assets, "index.html")
@@ -101,10 +103,20 @@ func main() {
 	}
 	app.tmpl = tmpl
 
+	mapTmpl, err := template.ParseFS(assets, "map.html")
+	if err != nil {
+		logger.Error("parse map template", "err", err)
+		os.Exit(1)
+	}
+	app.mapTmpl = mapTmpl
+
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", app.handleIndex)
+	mux.HandleFunc("/map", app.handleMap)
+	mux.HandleFunc("/api/events", app.handleEvents)
 	mux.HandleFunc("/api/config", app.handleConfig)
 	mux.HandleFunc("/api/topology", app.handleTopology)
+	mux.HandleFunc("/api/stats", app.handleStats)
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ok\n"))
@@ -155,6 +167,9 @@ type app struct {
 	recordBase  string // -record DIR; "" means feature disabled
 	logger      *slog.Logger
 	tmpl        *template.Template
+	mapTmpl     *template.Template
+
+	eventBus *events.Bus
 
 	mu       sync.Mutex
 	router   *router.Router
@@ -181,6 +196,90 @@ func (a *app) handleIndex(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := a.tmpl.Execute(w, pageData{ConfigPath: a.cfgPath}); err != nil {
 		a.logger.Error("render", "err", err)
+	}
+}
+
+// handleMap serves the live visualisation page. The page bootstraps from
+// /api/topology for the static graph and then opens an EventSource on
+// /api/events for the live activity overlay.
+func (a *app) handleMap(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := a.mapTmpl.Execute(w, pageData{ConfigPath: a.cfgPath}); err != nil {
+		a.logger.Error("render map", "err", err)
+	}
+}
+
+// handleStats is a cheap polling endpoint for the live-map HUD. It
+// returns a tiny JSON snapshot — currently just host CPU% — so the
+// page doesn't need a separate SSE channel for slow-changing numbers.
+func (a *app) handleStats(w http.ResponseWriter, _ *http.Request) {
+	cpu := currentCPUPct()
+	resp := struct {
+		HostCPUPct float64 `json:"host_cpu_pct"`
+	}{HostCPUPct: cpu}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
+	_ = json.NewEncoder(w).Encode(resp)
+}
+
+// handleEvents streams the router's event bus to the client as
+// Server-Sent Events. Each event is one JSON object on a single SSE
+// "data:" line. The connection stays open until the client disconnects,
+// the server shuts down, or the bus is closed.
+//
+// Heartbeat comments (": ping\n\n") fire every 15 s so intermediate
+// proxies and idle-detection don't kill the stream during quiet periods.
+func (a *app) handleEvents(w http.ResponseWriter, r *http.Request) {
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "streaming unsupported", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache, no-transform")
+	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("X-Accel-Buffering", "no") // disable nginx buffering when proxied
+	w.WriteHeader(http.StatusOK)
+
+	ch, cancel := a.eventBus.Subscribe()
+	defer cancel()
+
+	// Send an initial comment so EventSource's onopen fires immediately
+	// even before any traffic flows.
+	_, _ = w.Write([]byte(": hello\n\n"))
+	flusher.Flush()
+
+	ticker := time.NewTicker(15 * time.Second)
+	defer ticker.Stop()
+
+	enc := json.NewEncoder(w)
+
+	for {
+		select {
+		case <-r.Context().Done():
+			return
+		case <-ticker.C:
+			if _, err := w.Write([]byte(": ping\n\n")); err != nil {
+				return
+			}
+			flusher.Flush()
+		case ev, ok := <-ch:
+			if !ok {
+				return
+			}
+			if _, err := w.Write([]byte("data: ")); err != nil {
+				return
+			}
+			if err := enc.Encode(ev); err != nil {
+				return
+			}
+			// enc.Encode already wrote a newline; SSE needs a *blank* line
+			// as the message terminator.
+			if _, err := w.Write([]byte("\n")); err != nil {
+				return
+			}
+			flusher.Flush()
+		}
 	}
 }
 
@@ -466,6 +565,7 @@ func (a *app) start() error {
 		Logger:        a.logger,
 		RecordDir:     a.recordBase,
 		RecordOnStart: a.recordEnabled && a.recordBase != "",
+		EventBus:      a.eventBus,
 	})
 	if err != nil {
 		cancel()

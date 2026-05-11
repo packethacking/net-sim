@@ -38,8 +38,20 @@ import (
 
 	"github.com/packethacking/net-sim/internal/audio"
 	"github.com/packethacking/net-sim/internal/config"
+	"github.com/packethacking/net-sim/internal/events"
 	"github.com/packethacking/net-sim/internal/tnc"
 )
+
+// txActiveThreshold is the audio peak (0–32767) above which a port's
+// transmitted block counts as "keyed." Tuned by eye against samoyed's
+// preamble levels — comfortably above the residual non-zero noise the
+// encoder leaves behind, well below modulator full-scale.
+const txActiveThreshold = 1500
+
+// txSilenceBlocks debounces TX end. samoyed leaves brief gaps between
+// preamble, frame, and postamble; we don't want to fire tx_end → tx_start
+// for those. 10 blocks at 441 samples / 44100 Hz = 100 ms.
+const txSilenceBlocks = 10
 
 // Options configures a Router. All paths default to "look up on $PATH".
 type Options struct {
@@ -60,6 +72,12 @@ type Options struct {
 	// RecordOnStart causes Router.Start to begin recording immediately
 	// after children come up. Ignored if RecordDir is empty.
 	RecordOnStart bool
+
+	// EventBus, if non-nil, receives per-port activity events from the
+	// audio path (tx_start / tx_end / rx_decision). Publishing is
+	// non-blocking, so leaving the bus attached but unsubscribed is
+	// cheap. See the events package.
+	EventBus *events.Bus
 }
 
 // Router is the running simulator.
@@ -359,11 +377,27 @@ func (r *Router) txReader(ctx context.Context, ref config.PortRef, c *tnc.Child)
 	pending := make([]byte, 0, audio.BlockBytes*4)
 	outgoing := r.linkQueues[ref] // empty slice if this port has no outgoing links
 
+	// Per-port TX state for event emission. Owned by this goroutine, so
+	// no synchronisation needed. active flips true on the first block
+	// above the active threshold and false after txSilenceBlocks
+	// consecutive quiet blocks.
+	var (
+		active     bool
+		quietCount int
+	)
+
 	for {
 		n, err := src.Read(buf)
 		if err != nil {
 			// EOF / closed-during-shutdown is the normal exit path.
 			if ctx.Err() != nil || errors.Is(err, io.EOF) || errors.Is(err, net.ErrClosed) {
+				if active && r.opts.EventBus != nil {
+					r.opts.EventBus.Publish(events.Event{
+						T:    time.Now(),
+						Type: events.TXEnd,
+						Port: ref.String(),
+					})
+				}
 				return
 			}
 			r.logger.Debug("tx audio read error", "port", ref, "err", err)
@@ -377,8 +411,33 @@ func (r *Router) txReader(ctx context.Context, ref config.PortRef, c *tnc.Child)
 			blk := make(audio.Block, audio.BlockBytes)
 			copy(blk, pending[:audio.BlockBytes])
 			pending = pending[audio.BlockBytes:]
+			peak := blk.PeakAbs()
 			if r.opts.Verbose {
-				r.logger.Debug("tx block", "port", ref, "peak", blk.PeakAbs(), "outgoing", len(outgoing))
+				r.logger.Debug("tx block", "port", ref, "peak", peak, "outgoing", len(outgoing))
+			}
+			if r.opts.EventBus != nil {
+				if peak >= txActiveThreshold {
+					if !active {
+						active = true
+						r.opts.EventBus.Publish(events.Event{
+							T:    time.Now(),
+							Type: events.TXStart,
+							Port: ref.String(),
+							Peak: peak,
+						})
+					}
+					quietCount = 0
+				} else if active {
+					quietCount++
+					if quietCount >= txSilenceBlocks {
+						active = false
+						r.opts.EventBus.Publish(events.Event{
+							T:    time.Now(),
+							Type: events.TXEnd,
+							Port: ref.String(),
+						})
+					}
+				}
 			}
 			if s := r.session.Load(); s != nil {
 				s.WriteTX(ref, blk)
@@ -404,6 +463,16 @@ func (r *Router) rxFeeder(ctx context.Context, dst config.PortRef, stdin io.Writ
 
 	links := r.rxLinks[dst] // links *into* this destination
 
+	// Per-destination RX event state. We emit rx_decision only when the
+	// (decision, source-set) tuple changes since the last block — busy
+	// channels would otherwise generate ~100 events/s/port. lastSources is
+	// kept sorted so equality comparison is straightforward.
+	var (
+		lastDecision audio.MixDecision = -1
+		lastSources  string
+		sourcePorts  []*linkQueue // scratch, reused
+	)
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -412,6 +481,7 @@ func (r *Router) rxFeeder(ctx context.Context, dst config.PortRef, stdin io.Writ
 		}
 
 		var active []audio.ActiveTX
+		sourcePorts = sourcePorts[:0]
 		for _, q := range links {
 			b, ok := q.pop()
 			if !ok {
@@ -422,9 +492,31 @@ func (r *Router) rxFeeder(ctx context.Context, dst config.PortRef, stdin io.Writ
 				LossDB:  q.loss,
 				NoiseDB: q.noise,
 			})
+			sourcePorts = append(sourcePorts, q)
 		}
 
 		blk, dec := r.mixer.Mix(active)
+
+		if r.opts.EventBus != nil {
+			srcKey, srcList := summariseSources(sourcePorts)
+			if dec != lastDecision || srcKey != lastSources {
+				// Only emit when something interesting is happening
+				// or when the channel just went quiet — both inform
+				// the visualiser, but silent-→-silent transitions
+				// (the common case) are skipped.
+				if dec != audio.MixSilence || lastDecision != -1 {
+					r.opts.EventBus.Publish(events.Event{
+						T:        time.Now(),
+						Type:     events.RXDecision,
+						Port:     dst.String(),
+						Decision: decisionName(dec),
+						Sources:  srcList,
+					})
+				}
+				lastDecision = dec
+				lastSources = srcKey
+			}
+		}
 
 		// Per-link noise summed in *after* the capture decision so noise
 		// on a quieter link doesn't spuriously change which signal wins
@@ -473,6 +565,32 @@ func parsePortRef(s string) (config.PortRef, error) {
 		}
 	}
 	return config.PortRef{}, fmt.Errorf("invalid port ref %q", s)
+}
+
+// summariseSources returns a stable key for the set of source ports
+// feeding a destination this tick, plus the sorted list of "node.port"
+// strings. The key is the join of the sorted list; cheap to compare for
+// equality across ticks.
+func summariseSources(qs []*linkQueue) (string, []string) {
+	if len(qs) == 0 {
+		return "", nil
+	}
+	list := make([]string, len(qs))
+	for i, q := range qs {
+		list[i] = q.src.String()
+	}
+	// Bubble sort is fine — typically 0–5 entries.
+	for i := 1; i < len(list); i++ {
+		for j := i; j > 0 && list[j-1] > list[j]; j-- {
+			list[j-1], list[j] = list[j], list[j-1]
+		}
+	}
+	// Join without allocating a separator string per call.
+	key := list[0]
+	for i := 1; i < len(list); i++ {
+		key += "|" + list[i]
+	}
+	return key, list
 }
 
 func decisionName(d audio.MixDecision) string {
