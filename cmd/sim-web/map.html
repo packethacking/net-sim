@@ -484,6 +484,7 @@ function renderRegularStation(s) {
     x: s.x, y: s.y + 22,
     'text-anchor': 'middle',
     class: 'station-label',
+    id: 'station-label-' + cssId(s.id),
   }, layers.labels);
   lbl.textContent = stationDisplayCall(s.id);
 }
@@ -1377,6 +1378,32 @@ async function pollCPU() {
 }
 setInterval(pollCPU, 1000);
 pollCPU();
+
+// ============================================================
+// Observed-callsign overlay — replace heuristic station labels
+// with the routing call samoyed actually reports.
+// ============================================================
+async function pollObserved() {
+  try {
+    const r = await fetch('/api/observed', { cache: 'no-store' });
+    const j = await r.json();
+    const stations = j.stations || {};
+    for (const [nodeId, summary] of Object.entries(stations)) {
+      if (!summary.routing_call) continue;
+      const lbl = document.getElementById('station-label-' + cssId(nodeId));
+      if (lbl) {
+        let txt = summary.routing_call;
+        // If the station hosts other calls too (e.g. BBSCALL alongside
+        // NODECALL), show the count quietly.
+        const others = (summary.all_calls || []).filter(c => c !== summary.routing_call);
+        if (others.length) txt += '  +' + others.length;
+        lbl.textContent = txt;
+      }
+    }
+  } catch {}
+}
+setInterval(pollObserved, 5000);
+setTimeout(pollObserved, 2000);  // first read shortly after boot
 
 window.addEventListener('resize', () => { renderStatic(); });
 

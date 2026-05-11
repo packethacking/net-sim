@@ -3,6 +3,7 @@ package tnc
 import (
 	"context"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"os/exec"
@@ -58,7 +59,12 @@ func startSamoyed(ctx context.Context, s Spec) (*Child, error) {
 	args := []string{"-c", confPath, "-t", "0", "-q", "dh"}
 
 	cmd := exec.CommandContext(ctx, s.SamoyedBin, args...)
-	cmd.Stdout = newPrefixWriter(os.Stderr, "["+s.NodeID+"."+s.PortID+"] ")
+	prefixed := newPrefixWriter(os.Stderr, "["+s.NodeID+"."+s.PortID+"] ")
+	if s.StderrTap != nil {
+		cmd.Stdout = io.MultiWriter(prefixed, s.StderrTap)
+	} else {
+		cmd.Stdout = prefixed
+	}
 	cmd.Stderr = cmd.Stdout
 
 	stdin, err := cmd.StdinPipe()

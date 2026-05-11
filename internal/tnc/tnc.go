@@ -54,6 +54,12 @@ type Spec struct {
 	SamoyedBin  string // path to samoyed-direwolf
 	DirewolfBin string // path to direwolf
 	WorkDir     string // scratch dir for per-port config files (and FIFOs, for direwolf)
+
+	// StderrTap, if non-nil, also receives the TNC's stdout/stderr
+	// (unprefixed). Used by router.Observer to scrape locally-
+	// transmitted callsigns. The existing prefixed-to-real-stderr
+	// stream remains so docker logs stay readable.
+	StderrTap io.Writer
 }
 
 // Child is one running TNC process exposing stdin/TX-audio/KISS to the

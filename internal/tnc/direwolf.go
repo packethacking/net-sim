@@ -3,6 +3,7 @@ package tnc
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -93,7 +94,12 @@ func startDirewolf(ctx context.Context, s Spec) (*Child, error) {
 
 	cmd := exec.CommandContext(ctx, s.DirewolfBin, args...)
 	cmd.Env = append(os.Environ(), "HOME="+portDir)
-	cmd.Stdout = newPrefixWriter(os.Stderr, "["+s.NodeID+"."+s.PortID+"] ")
+	prefixed := newPrefixWriter(os.Stderr, "["+s.NodeID+"."+s.PortID+"] ")
+	if s.StderrTap != nil {
+		cmd.Stdout = io.MultiWriter(prefixed, s.StderrTap)
+	} else {
+		cmd.Stdout = prefixed
+	}
 	cmd.Stderr = cmd.Stdout
 
 	stdin, err := cmd.StdinPipe()
