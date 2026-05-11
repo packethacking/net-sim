@@ -603,7 +603,11 @@ func (r *Router) rxFeeder(ctx context.Context, dst config.PortRef, stdin io.Writ
 			}
 		}
 		if maxNoise > 0 {
-			r.mixer.AddNoise(blk, maxNoise)
+			// AddNoiseQuieted models the FM threshold effect: full
+			// hiss when the channel is idle, signal "captures" the
+			// limiter and drops the audible noise floor when a
+			// strong TX is present. See audio.AddNoiseQuieted.
+			r.mixer.AddNoiseQuieted(blk, maxNoise)
 		}
 
 		if r.opts.Verbose && dec != audio.MixSilence {

@@ -177,3 +177,44 @@ func (m *Mixer) AddNoise(b Block, noiseDB float64) {
 		b[i+1] = byte(uint16(s2) >> 8)
 	}
 }
+
+// fmQuietingMargin is the SNR (dB) below which no quieting occurs.
+// Above this threshold each dB of SNR above the floor knocks the
+// effective noise level down by fmQuietingSlope dB. This is the
+// standard FM "threshold knee" — below threshold the receiver hears
+// mostly noise; above it the carrier captures the limiter and the
+// output rapidly cleans up.
+const (
+	fmQuietingMargin = 6.0  // dB headroom before quieting kicks in
+	fmQuietingSlope  = 2.0  // dB of noise drop per dB of SNR above margin
+	fmQuietingFloor  = 60.0 // never quieter than this many dB below FS
+)
+
+// AddNoiseQuieted is AddNoise with FM threshold quieting baked in.
+// The block's existing signal peak is read first; if it's strong
+// enough relative to noiseDB, the effective noise level applied is
+// reduced. Silence in → full noise out (idle channel hisses). Loud
+// signal in → near-silent noise (signal "captures" the demod).
+//
+// Use this from the rxFeeder for receiver-side band noise. Use the
+// plain AddNoise when you specifically want a fixed-level noise
+// addition regardless of signal content (test fixtures, the
+// collision-mode "noise" output).
+func (m *Mixer) AddNoiseQuieted(b Block, noiseDB float64) {
+	if noiseDB <= 0 {
+		return
+	}
+	signalPeak := b.PeakAbs()
+	noiseAmp := AmplitudeFromDB(noiseDB) * float64(math.MaxInt16)
+	effectiveDB := noiseDB
+	if signalPeak > 0 && noiseAmp > 0 {
+		snrDB := 20 * math.Log10(float64(signalPeak)/noiseAmp)
+		if snrDB > fmQuietingMargin {
+			effectiveDB += (snrDB - fmQuietingMargin) * fmQuietingSlope
+			if effectiveDB > fmQuietingFloor {
+				effectiveDB = fmQuietingFloor
+			}
+		}
+	}
+	m.AddNoise(b, effectiveDB)
+}
