@@ -28,6 +28,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"sync"
 	"sync/atomic"
 	"time"
 )
@@ -175,14 +176,19 @@ func (c *dockerClient) containerCPUPct(ctx context.Context, id string) (float64,
 }
 
 // simCPUSampler runs forever in the background, refreshing simCPUPct
-// every 2 s. Errors are silently absorbed — the visualiser will see
+// every 3 s. Errors are silently absorbed — the visualiser will see
 // either a stale value or NaN, both of which it handles.
 func simCPUSampler() {
 	cli := newDockerClient()
-	tick := time.NewTicker(2 * time.Second)
+	tick := time.NewTicker(3 * time.Second)
 	defer tick.Stop()
 	for range tick.C {
-		ctx, cancel := context.WithTimeout(context.Background(), 2500*time.Millisecond)
+		// 5 s per tick is plenty: Docker's `?stream=false&one-shot=false`
+		// blocks ~1 s per container while it computes a delta against a
+		// fresh snapshot. With the per-container calls fanned out below,
+		// the whole sample should land in ~1 s regardless of container
+		// count.
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		total, err := cli.sampleOnce(ctx)
 		cancel()
 		if err != nil {
@@ -204,13 +210,29 @@ func (c *dockerClient) sampleOnce(ctx context.Context) (float64, error) {
 	if err != nil {
 		return 0, err
 	}
+	// Fan out per-container CPU% queries in parallel. The Docker stats
+	// call for `?stream=false&one-shot=false` blocks for ~1 s on each
+	// container while the daemon assembles the delta; running them
+	// sequentially produced wall-clock time = N seconds and most calls
+	// were cancelled by the per-tick context. With parallel calls the
+	// whole sample finishes in ~1 s regardless of container count.
+	results := make([]float64, len(ids))
+	var wg sync.WaitGroup
+	for i, id := range ids {
+		i, id := i, id
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			pct, err := c.containerCPUPct(ctx, id)
+			if err == nil {
+				results[i] = pct
+			}
+		}()
+	}
+	wg.Wait()
 	var total float64
-	for _, id := range ids {
-		pct, err := c.containerCPUPct(ctx, id)
-		if err != nil {
-			continue
-		}
-		total += pct
+	for _, v := range results {
+		total += v
 	}
 	return total, nil
 }
