@@ -267,6 +267,63 @@ text.port-label {
   opacity: 0.75;
   pointer-events: none;
 }
+
+/* Listen control — small round headphone-icon per port. */
+.listen-btn {
+  cursor: pointer;
+}
+.listen-btn circle {
+  fill: rgba(2,8,12,0.7);
+  stroke: var(--phos-dim);
+  stroke-width: 1;
+  transition: stroke 0.15s, fill 0.15s;
+}
+.listen-btn:hover circle {
+  stroke: var(--phos-hot);
+  fill: rgba(78,220,169,0.18);
+}
+.listen-btn.active circle {
+  fill: var(--amber);
+  stroke: var(--amber-hot);
+  stroke-width: 1.5;
+}
+.listen-btn text {
+  font-family: var(--font-mono);
+  font-size: 8px;
+  fill: var(--phos);
+  pointer-events: none;
+  text-anchor: middle;
+  dominant-baseline: central;
+}
+.listen-btn.active text {
+  fill: #03060a;
+  font-weight: bold;
+}
+
+#panel-listen {
+  bottom: 76px; right: 18px; width: 280px;
+}
+#listen-status {
+  font-family: var(--font-display);
+  font-size: 18px;
+  letter-spacing: 3px;
+  color: var(--amber-hot);
+  text-shadow: 0 0 6px rgba(255,224,102,0.5);
+}
+#listen-stop {
+  margin-top: 6px;
+  background: rgba(255,90,90,0.15);
+  border: 1px solid var(--red);
+  color: var(--red-hot);
+  padding: 3px 10px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 2px;
+  cursor: pointer;
+  text-transform: uppercase;
+}
+#listen-stop:hover { background: rgba(255,90,90,0.3); }
+#listen-stop:disabled { opacity: 0.3; cursor: not-allowed; }
 text.km {
   font-family: var(--font-mono);
   font-size: 8px;
@@ -351,6 +408,17 @@ body.flash { filter: brightness(2.2); }
 <div class="hud" id="panel-log"><div class="frame">
   <div class="header"><span>SIGNAL&nbsp;LOG</span><span class="tag">FIFO&nbsp;40</span></div>
   <div class="body"><div id="log"></div></div>
+</div></div>
+
+<div class="hud" id="panel-listen"><div class="frame">
+  <div class="header"><span>LISTEN</span><span class="tag">WebAudio</span></div>
+  <div class="body">
+    <div id="listen-status">— idle —</div>
+    <div style="font-size:10px; color:var(--phos-dim); letter-spacing:1px; margin-top:2px">
+      click 🎧 next to a port · shift-click for tx
+    </div>
+    <button id="listen-stop" disabled>STOP</button>
+  </div>
 </div></div>
 
 <div class="hud" id="panel-status"><div class="frame">
@@ -874,6 +942,24 @@ function renderStatic() {
       class: 'port-label',
     }, layers.labels);
     txt.textContent = p.portId;
+
+    // 🎧 listen button — on the OPPOSITE side of the port from the
+    // label so they don't overlap.
+    const bx = p.x - 7 * Math.cos(a);
+    const by = p.y - 7 * Math.sin(a);
+    const g = el('g', {
+      class: 'listen-btn',
+      transform: `translate(${bx.toFixed(1)}, ${by.toFixed(1)})`,
+      id: 'listen-' + cssId(p.id),
+    }, layers.ports);
+    el('circle', { cx: 0, cy: 0, r: 4.5 }, g);
+    const tnode = el('text', { x: 0, y: 0 }, g);
+    tnode.textContent = '♪';
+    g.addEventListener('click', (ev) => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      toggleListen(p, ev.shiftKey ? 'tx' : 'rx');
+    });
   }
 
 }
@@ -1293,6 +1379,132 @@ setInterval(pollCPU, 1000);
 pollCPU();
 
 window.addEventListener('resize', () => { renderStatic(); });
+
+// ============================================================
+// audio streaming — listen to a port's PCM via WebSocket
+// ============================================================
+//
+// Click a port's ♪ icon → open WebSocket to /api/audio?port=&side=,
+// receive raw int16 LE 44.1 kHz mono blocks, feed a single AudioWorklet
+// node that drains them into the AudioContext at sample rate. Only
+// one port at a time — clicking another switches over.
+
+// Worklet code inlined and shipped as a Blob URL so we don't need a
+// second served file. It just queues incoming Float32 samples and
+// pulls from the queue on each process() call.
+const PCM_WORKLET = `
+class PCMSource extends AudioWorkletProcessor {
+  constructor() {
+    super();
+    this._q = new Float32Array(0);
+    this.port.onmessage = (e) => {
+      const incoming = e.data;
+      const merged = new Float32Array(this._q.length + incoming.length);
+      merged.set(this._q);
+      merged.set(incoming, this._q.length);
+      this._q = merged;
+    };
+  }
+  process(inputs, outputs) {
+    const out = outputs[0][0];
+    const n = Math.min(this._q.length, out.length);
+    for (let i = 0; i < n; i++) out[i] = this._q[i];
+    for (let i = n; i < out.length; i++) out[i] = 0;
+    this._q = this._q.subarray(n);
+    return true;
+  }
+}
+registerProcessor('pcm-source', PCMSource);
+`;
+
+const listenState = {
+  ctx: null,          // AudioContext (lazy, needs a user gesture)
+  node: null,         // AudioWorkletNode
+  ws: null,           // WebSocket
+  currentKey: null,   // "<port>|<side>"
+  port: null,
+  side: null,
+};
+
+async function ensureAudioCtx() {
+  if (listenState.ctx) return listenState.ctx;
+  // Net-sim is 44.1 kHz int16 mono. Some browsers will resample to
+  // their device rate; that's fine, samoyed's tones survive it.
+  const ctx = new (window.AudioContext || window.webkitAudioContext)({
+    sampleRate: 44100,
+  });
+  const blob = new Blob([PCM_WORKLET], { type: 'application/javascript' });
+  await ctx.audioWorklet.addModule(URL.createObjectURL(blob));
+  const node = new AudioWorkletNode(ctx, 'pcm-source');
+  node.connect(ctx.destination);
+  listenState.ctx = ctx;
+  listenState.node = node;
+  return ctx;
+}
+
+function stopListen() {
+  if (listenState.ws) {
+    try { listenState.ws.close(); } catch {}
+    listenState.ws = null;
+  }
+  if (listenState.currentKey) {
+    const old = document.getElementById('listen-' + cssId(listenState.port));
+    if (old) old.classList.remove('active');
+  }
+  listenState.currentKey = null;
+  listenState.port = null;
+  listenState.side = null;
+  $('listen-status').textContent = '— idle —';
+  $('listen-stop').disabled = true;
+}
+
+async function toggleListen(port, side) {
+  const key = port.id + '|' + side;
+  if (listenState.currentKey === key) {
+    stopListen();
+    return;
+  }
+  stopListen();
+  try {
+    await ensureAudioCtx();
+  } catch (err) {
+    $('listen-status').textContent = 'AUDIO ERR';
+    console.error(err);
+    return;
+  }
+  if (listenState.ctx.state === 'suspended') {
+    await listenState.ctx.resume();
+  }
+
+  const wsProto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  const url = `${wsProto}//${location.host}/api/audio?port=${encodeURIComponent(port.id)}&side=${side}`;
+  const ws = new WebSocket(url);
+  ws.binaryType = 'arraybuffer';
+  ws.onopen = () => {
+    listenState.currentKey = key;
+    listenState.port = port.id;
+    listenState.side = side;
+    listenState.ws = ws;
+    const btn = document.getElementById('listen-' + cssId(port.id));
+    if (btn) btn.classList.add('active');
+    $('listen-status').textContent = `${port.id} (${side})`;
+    $('listen-stop').disabled = false;
+  };
+  ws.onmessage = (e) => {
+    const i16 = new Int16Array(e.data);
+    const f32 = new Float32Array(i16.length);
+    for (let i = 0; i < i16.length; i++) f32[i] = i16[i] / 32768;
+    listenState.node.port.postMessage(f32, [f32.buffer]);
+  };
+  ws.onerror = () => {
+    $('listen-status').textContent = 'LINK ERR';
+  };
+  ws.onclose = () => {
+    if (listenState.ws === ws) stopListen();
+  };
+}
+
+$('listen-stop').addEventListener('click', stopListen);
 
 // ============================================================
 // boot
