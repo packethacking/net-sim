@@ -1,0 +1,1237 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>NET-SIM // SITUATION DISPLAY</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=VT323&family=Share+Tech+Mono&family=Major+Mono+Display&display=swap" rel="stylesheet">
+
+<style>
+/* ================================================================
+   NET-SIM SITUATION DISPLAY — DEFCON-flavour CRT.
+   Pure CSS aesthetic, vanilla JS, SVG graph.
+   ================================================================ */
+
+:root {
+  --bg-0:        #03060a;   /* deep CRT black with blue cast */
+  --bg-1:        #061018;
+  --grid:        rgba(78, 220, 169, 0.07);
+  --grid-strong: rgba(78, 220, 169, 0.18);
+  --phos:        #4ddc97;   /* phosphor green primary */
+  --phos-hot:    #7effc1;   /* hotter phosphor */
+  --phos-glow:   rgba(78, 220, 169, 0.55);
+  --phos-dim:    #2d7a5b;
+  --amber:       #ffb400;
+  --amber-hot:   #ffe066;
+  --red:         #ff3a3a;
+  --red-hot:     #ff7575;
+  --violet:      #c896ff;
+  --blue:        #8ccfff;
+  --paper:       #b9f1d6;
+
+  --font-display: 'VT323', 'Major Mono Display', monospace;
+  --font-mono:    'Share Tech Mono', 'JetBrains Mono', 'Fira Mono', monospace;
+}
+
+* { box-sizing: border-box; }
+html, body {
+  margin: 0; padding: 0; height: 100%;
+  background: var(--bg-0);
+  color: var(--phos);
+  font-family: var(--font-mono);
+  font-size: 13px;
+  overflow: hidden;
+  cursor: crosshair;
+  -webkit-font-smoothing: none;
+  font-smooth: never;
+}
+
+/* — Background layers ———————————————————————————————————————————— */
+
+/* Faint vector grid (lat/lon style — finer lines at 32 px, heavier at 128) */
+body::before {
+  content: '';
+  position: fixed; inset: 0;
+  background:
+    /* major */ linear-gradient(var(--grid-strong) 1px, transparent 1px) 0 0 / 128px 128px,
+    linear-gradient(90deg, var(--grid-strong) 1px, transparent 1px) 0 0 / 128px 128px,
+    /* minor */ linear-gradient(var(--grid) 1px, transparent 1px) 0 0 / 32px 32px,
+    linear-gradient(90deg, var(--grid) 1px, transparent 1px) 0 0 / 32px 32px;
+  pointer-events: none;
+  z-index: 1;
+}
+
+/* CRT scanlines + soft vignette + RGB chromatic aberration */
+body::after {
+  content: '';
+  position: fixed; inset: 0;
+  background:
+    /* scanlines */
+    repeating-linear-gradient(0deg,
+      rgba(0,0,0,0) 0,
+      rgba(0,0,0,0) 2px,
+      rgba(0,255,170,0.04) 3px,
+      rgba(0,0,0,0.18) 4px),
+    /* vignette */
+    radial-gradient(ellipse at center,
+      rgba(0,0,0,0) 50%,
+      rgba(0,0,0,0.55) 90%,
+      rgba(0,0,0,0.85) 100%);
+  pointer-events: none;
+  z-index: 9998;
+  mix-blend-mode: normal;
+  animation: crt-flicker 7s infinite step-end;
+}
+@keyframes crt-flicker {
+  0%, 97%, 100% { opacity: 1; }
+  98% { opacity: 0.84; }   /* very subtle drop */
+  99% { opacity: 0.96; }
+}
+
+/* SVG is a "replaced" element with intrinsic 300x150 dimensions —
+   `inset: 0` won't auto-size it. Pin width/height to the viewport. */
+#map {
+  position: fixed; top: 0; left: 0;
+  width: 100vw; height: 100vh;
+  display: block;
+  z-index: 2;
+}
+
+/* — HUD panels — ASCII box-drawing borders via SVG-y CSS — ———————— */
+
+.hud {
+  position: fixed; z-index: 10;
+  background:
+    radial-gradient(ellipse at top left, rgba(78,220,169,0.06), transparent 60%),
+    rgba(4, 9, 14, 0.86);
+  border: 1px solid rgba(78,220,169,0.4);
+  box-shadow:
+    inset 0 0 0 1px rgba(78,220,169,0.06),
+    inset 0 0 30px rgba(78,220,169,0.07),
+    0 0 12px rgba(78,220,169,0.18),
+    0 0 1px rgba(78,220,169,0.6);
+  padding: 0;
+  backdrop-filter: blur(2px);
+  font-family: var(--font-mono);
+}
+
+.hud .frame {
+  position: relative;
+}
+/* tick-marks at the four corners of every HUD panel — Introversion does this */
+.hud .frame::before,
+.hud .frame::after {
+  content: '';
+  position: absolute;
+  width: 10px; height: 10px;
+  border: 1px solid var(--phos);
+  filter: drop-shadow(0 0 4px var(--phos-glow));
+}
+.hud .frame::before { top: -3px; left: -3px; border-right: none; border-bottom: none; }
+.hud .frame::after  { bottom: -3px; right: -3px; border-left: none; border-top: none; }
+
+.hud .header {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 6px 10px;
+  font-family: var(--font-display);
+  font-size: 18px;
+  letter-spacing: 3px;
+  line-height: 1;
+  color: var(--phos-hot);
+  text-shadow: 0 0 6px var(--phos-glow), 0 0 14px rgba(78,220,169,0.3);
+  border-bottom: 1px dashed rgba(78,220,169,0.25);
+  background: rgba(78,220,169,0.05);
+}
+.hud .header .tag {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--amber);
+  text-shadow: 0 0 4px rgba(255,180,0,0.55);
+  letter-spacing: 2px;
+}
+.hud .body { padding: 8px 10px; }
+
+.hud table { border-collapse: collapse; font-family: var(--font-mono); font-size: 12px; }
+.hud td { padding: 2px 10px 2px 0; }
+.hud td.num {
+  font-family: var(--font-display); font-size: 18px; line-height: 1;
+  color: var(--amber-hot);
+  text-shadow: 0 0 6px rgba(255,224,102,0.55);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.hud td.lbl { color: var(--phos); opacity: 0.85; letter-spacing: 1px; }
+
+#panel-top    { top: 18px;    left: 18px;  width: 280px; }
+#panel-log    { bottom: 18px; left: 18px;  width: 430px; }
+#panel-legend { top: 18px;    right: 18px; width: 240px; }
+#panel-status { bottom: 18px; right: 18px; width: 280px; }
+
+/* Event log */
+#log {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  line-height: 1.45;
+  max-height: 26vh;
+  overflow: hidden;
+}
+.log-line {
+  white-space: pre;
+  display: flex; gap: 8px;
+  letter-spacing: 0.5px;
+  animation: log-decay 18s linear forwards;
+}
+.log-line .ts  { color: var(--phos-dim); }
+.log-line .typ { font-weight: bold; }
+.log-line .body { color: var(--paper); opacity: 0.9; }
+.log-line.tx  .typ { color: var(--phos-hot);  text-shadow: 0 0 6px var(--phos-glow); }
+.log-line.rx  .typ { color: var(--blue);      text-shadow: 0 0 6px rgba(140,207,255,0.5); }
+.log-line.cap .typ { color: var(--amber-hot); text-shadow: 0 0 6px rgba(255,224,102,0.6); }
+.log-line.col .typ { color: var(--red-hot);   text-shadow: 0 0 8px rgba(255,90,90,0.7); }
+.log-line.sil .typ { color: var(--phos-dim); }
+@keyframes log-decay {
+  0%   { opacity: 1; }
+  60%  { opacity: 1; }
+  100% { opacity: 0.30; }
+}
+
+/* Legend */
+.legend-row { display: flex; align-items: center; gap: 9px; padding: 1px 0; letter-spacing: 1px; font-size: 11px; }
+.legend-row .swatch {
+  display: inline-block; width: 10px; height: 10px;
+  background: currentColor;
+  box-shadow: 0 0 6px currentColor, 0 0 12px currentColor;
+}
+.legend-row.gap { margin-top: 6px; }
+
+/* Status panel */
+#status-line {
+  font-family: var(--font-display);
+  font-size: 22px;
+  letter-spacing: 4px;
+  color: var(--phos-hot);
+  text-shadow: 0 0 8px var(--phos-glow), 0 0 16px rgba(78,220,169,0.3);
+  line-height: 1;
+  margin-top: 2px;
+}
+#status-since {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--phos-dim);
+  letter-spacing: 2px;
+  text-shadow: none;
+}
+.blink { animation: blink-amber 0.6s steps(2, start) infinite; }
+@keyframes blink-amber {
+  50% { color: var(--amber); text-shadow: 0 0 10px rgba(255,180,0,0.6); }
+}
+
+/* Top-left masthead row */
+.masthead {
+  display: flex; flex-direction: column;
+  font-family: var(--font-display);
+  letter-spacing: 4px; line-height: 1;
+  text-shadow: 0 0 8px var(--phos-glow);
+}
+.masthead .big { font-size: 28px; color: var(--phos-hot); }
+.masthead .sub { font-size: 12px; color: var(--phos); opacity: 0.7; margin-top: 4px; letter-spacing: 6px; }
+
+/* — SVG content styling ——————————————————————————————————————————— */
+
+text.station-label {
+  fill: var(--phos);
+  font-family: var(--font-mono);
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 1.5px;
+  text-shadow: 0 0 5px var(--phos-glow);
+  pointer-events: none;
+}
+text.town-label {
+  fill: var(--phos);
+  font-family: var(--font-display);
+  font-size: 36px;
+  letter-spacing: 12px;
+  opacity: 0.28;
+  text-transform: uppercase;
+  pointer-events: none;
+}
+text.port-label {
+  fill: var(--phos);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.5px;
+  opacity: 0.75;
+  pointer-events: none;
+}
+text.km {
+  font-family: var(--font-mono);
+  font-size: 8px;
+  letter-spacing: 2px;
+  fill: var(--phos-dim);
+  opacity: 0.5;
+}
+
+/* Power-on intro — opacity-only so it can't create a containing block
+   for the SVGs' position:fixed children. A short brightness flash is
+   triggered separately via a class on body (added then removed by JS),
+   so it leaves no residual filter behind. */
+@keyframes power-on {
+  0%   { opacity: 0; }
+  18%  { opacity: 1; }
+  100% { opacity: 1; }
+}
+.boot { animation: power-on 0.85s ease-out 0s both; }
+body.flash { filter: brightness(2.2); }
+
+/* Tiny screen-edge crawl text */
+.crawl {
+  position: fixed; bottom: 4px; left: 0; right: 0;
+  text-align: center;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 8px;
+  color: var(--phos-dim);
+  z-index: 5;
+  opacity: 0.6;
+  pointer-events: none;
+}
+</style>
+</head>
+<body>
+
+<!-- Topology + activity layer -->
+<svg id="map" class="boot" aria-hidden="true"></svg>
+
+<div class="hud" id="panel-top"><div class="frame">
+  <div class="header">
+    <div class="masthead">
+      <div class="big">NET-SIM</div>
+      <div class="sub">SITUATION&nbsp;DISPLAY</div>
+    </div>
+    <div class="tag">CH-MON / OP</div>
+  </div>
+  <div class="body">
+    <table>
+      <tr><td class="lbl">STATIONS</td><td class="num" id="stat-stations">––</td>
+          <td class="lbl">EPS</td><td class="num" id="stat-eps">0</td></tr>
+      <tr><td class="lbl">PORTS</td><td class="num" id="stat-ports">––</td>
+          <td class="lbl">TX</td><td class="num" id="stat-tx">0</td></tr>
+      <tr><td class="lbl">LINKS</td><td class="num" id="stat-links">––</td>
+          <td class="lbl">COL</td><td class="num" id="stat-col">0</td></tr>
+      <tr><td class="lbl">CHANS</td><td class="num" id="stat-chans">––</td>
+          <td class="lbl">CAP</td><td class="num" id="stat-cap">0</td></tr>
+      <tr><td class="lbl" colspan="3">HOST CPU</td>
+          <td class="num" colspan="1" id="stat-cpu" style="text-align:right">––</td></tr>
+    </table>
+    <!-- CPU sparkline + numeric overlay -->
+    <div style="position:relative; margin-top: 6px; height: 28px;">
+      <svg id="cpu-spark" width="100%" height="28" preserveAspectRatio="none"
+           style="display:block; opacity:0.9"></svg>
+    </div>
+  </div>
+</div></div>
+
+<div class="hud" id="panel-legend"><div class="frame">
+  <div class="header"><span>LEGEND</span><span class="tag">LAYER&nbsp;01</span></div>
+  <div class="body">
+    <div class="legend-row" style="color:#6affc9"><span class="swatch"></span><span>AFSK&nbsp;1200&nbsp;TOWN</span></div>
+    <div class="legend-row" style="color:#ffb066"><span class="swatch"></span><span>GFSK&nbsp;9600&nbsp;BACKBONE</span></div>
+    <div class="legend-row" style="color:#c896ff"><span class="swatch"></span><span>IL2P&nbsp;BACKBONE</span></div>
+    <div class="legend-row gap" style="color:#7effc1"><span class="swatch"></span><span>TX&nbsp;KEYED</span></div>
+    <div class="legend-row" style="color:#8ccfff"><span class="swatch"></span><span>RX&nbsp;SINGLE</span></div>
+    <div class="legend-row" style="color:#ffe066"><span class="swatch"></span><span>RX&nbsp;CAPTURE</span></div>
+    <div class="legend-row" style="color:#ff7575"><span class="swatch"></span><span>RX&nbsp;COLLISION</span></div>
+  </div>
+</div></div>
+
+<div class="hud" id="panel-log"><div class="frame">
+  <div class="header"><span>SIGNAL&nbsp;LOG</span><span class="tag">FIFO&nbsp;40</span></div>
+  <div class="body"><div id="log"></div></div>
+</div></div>
+
+<div class="hud" id="panel-status"><div class="frame">
+  <div class="header"><span>LINK</span><span class="tag" id="status-tag">/api/events</span></div>
+  <div class="body">
+    <div id="status-line">CONNECTING&nbsp;…</div>
+    <div id="status-since">––:––:––</div>
+  </div>
+</div></div>
+
+<div class="crawl">▲ NET-SIM v0 · UNCLASSIFIED · DO NOT KEY ON FREQ ·  AUDIO-DOMAIN PACKET RADIO SIMULATOR ·  ▲</div>
+
+<script>
+'use strict';
+
+// ============================================================
+// helpers
+// ============================================================
+
+const SVG_NS = 'http://www.w3.org/2000/svg';
+const $ = (id) => document.getElementById(id);
+
+function el(name, attrs = {}, parent = null) {
+  const e = document.createElementNS(SVG_NS, name);
+  for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, v);
+  if (parent) parent.appendChild(e);
+  return e;
+}
+function cssId(s) { return s.replace(/[^a-zA-Z0-9_]/g, '-'); }
+function canonicalKey(a, b) { return a < b ? a + '|' + b : b + '|' + a; }
+
+// Render the station id as the call you'd actually type into a BPQ
+// `c <call>` command. For now: append "-7" to bare Q-prefix synthetic
+// calls (the convention used by this test network). Real callsigns and
+// anything that already carries an SSID pass through unchanged.
+function stationDisplayCall(id) {
+  if (!id) return id;
+  if (id.includes('-')) return id;                          // already has SSID
+  if (/^Q[A-Z]\d[A-Z]{3,4}$/.test(id)) return id + '-7';    // synthetic test call
+  return id;
+}
+function modeColor(mode) {
+  if (mode === 'il2p')     return '#c896ff';
+  if (mode === 'gfsk9600') return '#ffb066';
+  return '#6affc9';
+}
+function decColor(d) {
+  if (d === 'capture')                       return '#ffe066';
+  if (d === 'collision' || d === 'sum')      return '#ff7575';
+  if (d === 'single')                        return '#8ccfff';
+  return null;
+}
+
+// ============================================================
+// state
+// ============================================================
+
+const state = {
+  nodes:    new Map(),  // nodeId → station record
+  ports:    new Map(),  // "n.p" → port record
+  channels: [],         // {id, ports[], mode, kind: 'town'|'p2p'}
+  links:    [],         // edge records {from, to, mode, color, kind, hub?}
+  towns:    [],         // layout-time town clusters (population/centre)
+  txActive: new Set(),
+  collisions: 0,
+  captures: 0,
+  eventsThisSecond: 0,
+  pulses: [],
+  ringSnaps: [],        // expanding TX rings, drawn on map
+};
+
+// ============================================================
+// topology
+// ============================================================
+
+async function loadTopology() {
+  const r = await fetch('/api/topology');
+  if (!r.ok) throw new Error('topology fetch failed: ' + r.status);
+  const cfg = await r.json();
+
+  for (const n of (cfg.nodes || [])) {
+    const station = { id: n.id, ports: [], x: 0, y: 0, town: null };
+    state.nodes.set(n.id, station);
+    for (const p of (n.ports || [])) {
+      const mode = (p.modem && p.modem.mode) || 'afsk1200';
+      const port = {
+        id: `${n.id}.${p.id}`,
+        nodeId: n.id, portId: p.id, mode,
+        kissPort: p.kiss_port,
+        color: modeColor(mode),
+        x: 0, y: 0, angle: 0,
+        station, tx: false, rxDec: 'silence',
+      };
+      station.ports.push(port);
+      state.ports.set(port.id, port);
+    }
+  }
+
+  // Build adjacency for channel detection.
+  const adj = new Map();
+  const link2 = new Map();
+  for (const l of (cfg.links || [])) {
+    const pa = state.ports.get(l.from), pb = state.ports.get(l.to);
+    if (!pa || !pb) continue;
+    if (pa.mode !== pb.mode) continue;
+    if (!adj.has(l.from)) adj.set(l.from, new Set());
+    if (!adj.has(l.to))   adj.set(l.to,   new Set());
+    adj.get(l.from).add(l.to);
+    adj.get(l.to).add(l.from);
+    const k = l.from < l.to ? `${l.from}|${l.to}` : `${l.to}|${l.from}`;
+    if (!link2.has(k)) link2.set(k, { a: l.from, b: l.to, mode: pa.mode });
+  }
+  for (const { a, b, mode } of link2.values()) {
+    state.links.push({ from: a, to: b, mode, color: modeColor(mode) });
+  }
+
+  // Connected components → channels.
+  const seen = new Set();
+  let cid = 0;
+  for (const id of adj.keys()) {
+    if (seen.has(id)) continue;
+    const stack = [id], group = [];
+    while (stack.length) {
+      const v = stack.pop();
+      if (seen.has(v)) continue;
+      seen.add(v); group.push(v);
+      for (const w of adj.get(v) || []) if (!seen.has(w)) stack.push(w);
+    }
+    const mode = state.ports.get(group[0]).mode;
+    state.channels.push({
+      id: `ch${cid++}`,
+      ports: group, mode,
+      kind: group.length > 2 ? 'town' : 'p2p',
+      color: modeColor(mode),
+    });
+  }
+
+  // Tag each link with its channel kind, for rendering.
+  for (const l of state.links) {
+    const ch = state.channels.find(c => c.ports.includes(l.from));
+    l.kind  = ch ? ch.kind : 'p2p';
+    l.chColor = ch ? ch.color : l.color;
+  }
+
+  $('stat-stations').textContent = String(state.nodes.size).padStart(2, '0');
+  $('stat-ports').textContent    = String(state.ports.size).padStart(2, '0');
+  $('stat-links').textContent    = String(link2.size).padStart(2, '0');
+  $('stat-chans').textContent    = String(state.channels.length).padStart(2, '0');
+}
+
+// ============================================================
+// town-clustered layout
+//
+// Each detected town channel becomes one visual cluster on a polygon
+// around the screen centre. Multi-port stations sit at the cluster's
+// centre; single-port stations orbit. Ports orbit their station. The
+// town label sits *between* the cluster and the screen centre — well
+// out of the way of any station text.
+// ============================================================
+
+function layout(w, h) {
+  const cx = w / 2, cy = h / 2;
+
+  // 1. Town clusters from afsk-1200 connected components of size > 2.
+  const towns = state.channels.filter(ch => ch.kind === 'town');
+  const nodeTown = new Map();
+  for (const ch of towns) {
+    const nodeIds = new Set();
+    for (const pid of ch.ports) {
+      const p = state.ports.get(pid);
+      if (p) nodeIds.add(p.nodeId);
+    }
+    for (const n of nodeIds) nodeTown.set(n, ch.id);
+  }
+  const groups = new Map();
+  for (const ch of towns) groups.set(ch.id, []);
+  groups.set('__ORPHAN__', []);
+  for (const s of state.nodes.values()) {
+    const t = nodeTown.get(s.id) || '__ORPHAN__';
+    groups.get(t).push(s);
+    s.townId = t;
+  }
+  for (const k of [...groups.keys()]) if (!groups.get(k).length) groups.delete(k);
+  const ordered = [...groups.keys()].sort();
+  const G = ordered.length;
+
+  // 2. Polygon of town centres. Slightly elliptical so 5 towns get
+  //    breathing room on widescreen displays.
+  const Rx = Math.min(w * 0.40, h * 0.42);
+  const Ry = Math.min(w * 0.38, h * 0.40);
+  const townMeta = new Map();
+  ordered.forEach((tid, i) => {
+    const a = (i / G) * Math.PI * 2 - Math.PI / 2;
+    townMeta.set(tid, {
+      id: tid,
+      x: cx + Rx * Math.cos(a),
+      y: cy + Ry * Math.sin(a),
+      a, members: groups.get(tid),
+      // a label point biased toward the screen centre
+      lx: cx + (Rx * 0.55) * Math.cos(a),
+      ly: cy + (Ry * 0.55) * Math.sin(a),
+    });
+  });
+
+  // 3. Lay stations within each cluster. The "anchor" station (most
+  //    ports — typically the HUB) sits at the centre. The rest fan
+  //    on an arc *away* from the screen centre so the cluster reads
+  //    like a flower with the hub at the stem.
+  const clusterR = Math.min(w, h) * 0.075;
+  for (const tid of ordered) {
+    const meta = townMeta.get(tid);
+    const members = meta.members.slice().sort((a, b) => b.ports.length - a.ports.length);
+    if (members.length === 1) {
+      members[0].x = meta.x; members[0].y = meta.y;
+    } else {
+      // hub at the centre of the cluster
+      members[0].x = meta.x; members[0].y = meta.y;
+      // others on an outward-facing arc
+      const k = members.length - 1;
+      // arc spans 240° centred on the outward direction from cx,cy
+      const baseAngle = meta.a;
+      const arc = Math.PI * 1.25;
+      for (let i = 1; i < members.length; i++) {
+        const t = (k === 1) ? 0 : (i - 1) / (k - 1) - 0.5;
+        const a = baseAngle + t * arc;
+        members[i].x = meta.x + clusterR * Math.cos(a);
+        members[i].y = meta.y + clusterR * Math.sin(a);
+      }
+    }
+  }
+
+  // 4. Ports orbit their station, oriented outward. Larger stations get
+  //    a wider port ring so dots don't pile up.
+  for (const s of state.nodes.values()) {
+    const k = s.ports.length;
+    const portR = 12 + (k - 1) * 2;
+    // Outward direction from cluster centre (or screen centre as fallback)
+    const meta = townMeta.get(s.townId);
+    const ox = (meta ? meta.x : cx);
+    const oy = (meta ? meta.y : cy);
+    const dx = s.x - ox, dy = s.y - oy;
+    const baseAngle = (Math.abs(dx) + Math.abs(dy) > 1) ? Math.atan2(dy, dx) : -Math.PI / 2;
+    s.ports.forEach((p, i) => {
+      // arrange ports on an arc facing outward (away from cluster centre)
+      const t = (k === 1) ? 0 : (i / (k - 1)) - 0.5;
+      const a = baseAngle + t * Math.PI * 0.9;
+      p.angle = a; p.station = s; p.stationR = portR;
+      p.x = s.x + portR * Math.cos(a);
+      p.y = s.y + portR * Math.sin(a);
+    });
+  }
+
+  state.towns = [...townMeta.values()];
+}
+
+// ============================================================
+// render — static graph
+// ============================================================
+
+const svg = $('map');
+let layers = {};
+
+function renderStatic() {
+  // Use viewport size directly. getBoundingClientRect on an SVG element
+  // whose CSS hasn't fully resolved can still return the intrinsic
+  // 300x150 default — viewport-relative units are reliable.
+  const w = Math.max(window.innerWidth,  300);
+  const h = Math.max(window.innerHeight, 300);
+  const r = { width: w, height: h };
+  svg.setAttribute('viewBox', `0 0 ${w} ${h}`);
+  svg.setAttribute('width',   w);
+  svg.setAttribute('height',  h);
+
+  // Clear & set up SVG <defs> + layers.
+  svg.innerHTML = '';
+  defs(svg);
+
+  layers = {
+    rings:    el('g', { id: 'l-rings' },    svg),  // concentric range rings
+    channels: el('g', { id: 'l-channels' }, svg),
+    links:    el('g', { id: 'l-links' },    svg),
+    townlbl:  el('g', { id: 'l-townlbl' },  svg),
+    pulses:   el('g', { id: 'l-pulses' },   svg),
+    stations: el('g', { id: 'l-stations' }, svg),
+    ports:    el('g', { id: 'l-ports' },    svg),
+    labels:   el('g', { id: 'l-labels' },   svg),
+    flashes:  el('g', { id: 'l-flashes' },  svg),
+  };
+
+  layout(r.width, r.height);
+
+  // Range rings — pure aesthetic, a CRT radar staple.
+  const cx = r.width / 2, cy = r.height / 2;
+  for (const f of [0.18, 0.28, 0.40]) {
+    const rad = Math.min(r.width, r.height) * f;
+    el('circle', {
+      cx, cy, r: rad,
+      fill: 'none',
+      stroke: 'rgba(78,220,169,0.10)',
+      'stroke-width': '0.6',
+      'stroke-dasharray': '2 6',
+    }, layers.rings);
+  }
+  // Crosshair
+  el('line', { x1: cx, y1: 0, x2: cx, y2: r.height, stroke: 'rgba(78,220,169,0.08)', 'stroke-width': '0.5' }, layers.rings);
+  el('line', { x1: 0, y1: cy, x2: r.width, y2: cy, stroke: 'rgba(78,220,169,0.08)', 'stroke-width': '0.5' }, layers.rings);
+
+  // Town label rings — subtle dotted circle around each cluster.
+  for (const t of state.towns) {
+    el('circle', {
+      cx: t.x, cy: t.y, r: 56,
+      fill: 'none',
+      stroke: 'rgba(78,220,169,0.18)',
+      'stroke-width': '0.7',
+      'stroke-dasharray': '2 5',
+      filter: 'url(#soft-glow)',
+    }, layers.channels);
+  }
+
+  // Per-link edges.
+  //   * P2P backbones: solid coloured, curved.
+  //   * Town channel: faint dashed line within the cluster.
+  // Every edge gets a deterministic id so activity can bump its
+  // "heat" — see linkHeatByKey + animateHeat() below.
+  state.linkElByKey    = new Map();     // canonical "from|to" key → svg element
+  state.linkHeatByKey  = new Map();     // canonical key → number 0..1
+  state.linkBaseOp     = new Map();     // idle stroke-opacity
+  state.linkBaseW      = new Map();     // idle stroke-width
+  state.linkColorByKey = new Map();     // idle stroke colour
+  state.linkFilterByKey= new Map();     // idle filter attr
+  state.linkDashByKey  = new Map();     // idle stroke-dasharray
+
+  for (const l of state.links) {
+    const pa = state.ports.get(l.from), pb = state.ports.get(l.to);
+    if (!pa || !pb) continue;
+    const key = canonicalKey(pa.id, pb.id);
+
+    if (l.kind === 'p2p') {
+      // Quadratic Bezier with a perpendicular sag so two p2p links
+      // between the same pair of clusters don't render on top of each
+      // other.
+      const sag = 22;
+      const mx = (pa.x + pb.x) / 2, my = (pa.y + pb.y) / 2;
+      const dx = pb.x - pa.x, dy = pb.y - pa.y;
+      const len = Math.hypot(dx, dy) || 1;
+      const nx = -dy / len, ny = dx / len;
+      const k = pa.id + '|' + pb.id;
+      const sign = (k.charCodeAt(0) + k.charCodeAt(k.length - 1)) % 2 ? 1 : -1;
+      const ctlX = mx + nx * sag * sign, ctlY = my + ny * sag * sign;
+      const baseOp = 0.45, baseW = 1.2;
+      const pathEl = el('path', {
+        d: `M ${pa.x} ${pa.y} Q ${ctlX} ${ctlY} ${pb.x} ${pb.y}`,
+        fill: 'none',
+        stroke: l.color,
+        'stroke-opacity': baseOp,
+        'stroke-width': baseW,
+        filter: 'url(#hot-glow)',
+      }, layers.links);
+      state.linkElByKey.set(key, pathEl);
+      state.linkBaseOp.set(key, baseOp);
+      state.linkBaseW.set(key, baseW);
+      state.linkColorByKey.set(key, l.color);
+      state.linkFilterByKey.set(key, 'url(#hot-glow)');
+      l.path = { ax: pa.x, ay: pa.y, bx: pb.x, by: pb.y, cx: ctlX, cy: ctlY };
+    } else {
+      const baseOp = 0.18, baseW = 0.7, dash = '1 3';
+      const lineEl = el('line', {
+        x1: pa.x, y1: pa.y, x2: pb.x, y2: pb.y,
+        stroke: l.color,
+        'stroke-opacity': baseOp,
+        'stroke-width': baseW,
+        'stroke-dasharray': dash,
+      }, layers.links);
+      state.linkElByKey.set(key, lineEl);
+      state.linkBaseOp.set(key, baseOp);
+      state.linkBaseW.set(key, baseW);
+      state.linkColorByKey.set(key, l.color);
+      state.linkFilterByKey.set(key, '');
+      state.linkDashByKey.set(key, dash);
+      l.path = { ax: pa.x, ay: pa.y, bx: pb.x, by: pb.y };
+    }
+  }
+
+  // Town label — placed at the inward-biased label point. Big, faded.
+  for (const t of state.towns) {
+    // Derive a short town label from the most common 2-char prefix of
+    // its station IDs. "QA0HUB" → "QA"; we then map a small built-in
+    // table to nicer names if available, falling back to the prefix.
+    const prefixes = new Map();
+    for (const s of t.members) {
+      const p = s.id.slice(0, 2);
+      prefixes.set(p, (prefixes.get(p) || 0) + 1);
+    }
+    let best = '', bestN = 0;
+    for (const [k, v] of prefixes) if (v > bestN) { best = k; bestN = v; }
+    const dictionary = {
+      QA: 'ABERDEEN', QB: 'BRISTOL', QC: 'CAMBRIDGE',
+      QD: 'DURHAM',   QE: 'EXETER',
+    };
+    const display = dictionary[best] || best.toUpperCase();
+    const lbl = el('text', {
+      x: t.lx, y: t.ly,
+      'text-anchor': 'middle',
+      'dominant-baseline': 'middle',
+      class: 'town-label',
+    }, layers.townlbl);
+    lbl.textContent = display;
+  }
+
+  // Stations — concentric octagon (hollow) + corner ticks, gives a
+  // "facility" feel. Cheaper than a real polygon: just stack two
+  // squares rotated 45°. NB: SVG presentation attributes don't resolve
+  // CSS var() — must use literal colours here.
+  for (const s of state.nodes.values()) {
+    const g = el('g', { transform: `translate(${s.x}, ${s.y})` }, layers.stations);
+    el('rect', { x: -6, y: -6, width: 12, height: 12,
+      fill: 'none', stroke: '#4ddc97', 'stroke-opacity': '0.55',
+      'stroke-width': '0.8', filter: 'url(#hot-glow)' }, g);
+    el('rect', { x: -6, y: -6, width: 12, height: 12,
+      fill: 'none', stroke: '#4ddc97', 'stroke-opacity': '0.45',
+      'stroke-width': '0.8', transform: 'rotate(45)' }, g);
+    el('circle', { cx: 0, cy: 0, r: 1.5,
+      fill: '#7effc1', filter: 'url(#hot-glow)' }, g);
+
+    // Station label below the box. Append "-7" if the id looks like a
+    // synthetic test callsign (Q-prefix, no existing SSID) — the only
+    // way to render the AX.25 address users actually connect with,
+    // until we have an optional `callsign:` field in the YAML. TODO.
+    const lbl = el('text', {
+      x: s.x, y: s.y + 22,
+      'text-anchor': 'middle',
+      class: 'station-label',
+    }, layers.labels);
+    lbl.textContent = stationDisplayCall(s.id);
+  }
+
+  // Ports.
+  for (const p of state.ports.values()) {
+    el('circle', {
+      cx: p.x, cy: p.y, r: 3.2,
+      fill: p.color, 'fill-opacity': '0.85',
+      stroke: p.color, 'stroke-opacity': '1', 'stroke-width': '0.6',
+      filter: 'url(#hot-glow)',
+      id: 'pnode-' + cssId(p.id),
+    }, layers.ports);
+    // tiny port name on the outward side — readable, not loud
+    const a = p.angle;
+    const lx = p.x + 7 * Math.cos(a);
+    const ly = p.y + 7 * Math.sin(a);
+    const txt = el('text', {
+      x: lx, y: ly,
+      'text-anchor': Math.cos(a) >= 0 ? 'start' : 'end',
+      'dominant-baseline': 'middle',
+      class: 'port-label',
+    }, layers.labels);
+    txt.textContent = p.portId;
+  }
+
+}
+
+function defs(parent) {
+  const d = el('defs', {}, parent);
+  d.innerHTML = `
+    <filter id="hot-glow" x="-60%" y="-60%" width="220%" height="220%">
+      <feGaussianBlur stdDeviation="1.4" result="b"/>
+      <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <filter id="loud-glow" x="-100%" y="-100%" width="300%" height="300%">
+      <feGaussianBlur stdDeviation="5" result="b"/>
+      <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <filter id="soft-glow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="2.5" result="b"/>
+      <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  `;
+}
+
+// ============================================================
+// activity overlay
+// ============================================================
+
+function onTXStart(port) {
+  port.tx = true;
+  state.txActive.add(port.id);
+  $('stat-tx').textContent = String(state.txActive.size).padStart(2, '0');
+
+  const c = document.getElementById('pnode-' + cssId(port.id));
+  if (c) {
+    c.setAttribute('r', '5.5');
+    c.setAttribute('fill', '#7effc1');
+    c.setAttribute('stroke', '#7effc1');
+    c.setAttribute('filter', 'url(#loud-glow)');
+  }
+
+  // Spawn an expanding ring at the port's location — "keying up" pulse.
+  const ring = el('circle', {
+    cx: port.x, cy: port.y, r: 4,
+    fill: 'none', stroke: '#7effc1', 'stroke-width': '1.2',
+    'stroke-opacity': '0.9',
+    filter: 'url(#loud-glow)',
+  }, layers.flashes);
+  state.ringSnaps.push({
+    el: ring, t0: performance.now(), dur: 1200,
+    fromR: 4, toR: 28,
+  });
+
+  // Backend tx_end is unreliable (samoyed stops sending blocks at burst
+  // end rather than emitting silence). Auto-clear so the visual matches.
+  if (port._txClear) clearTimeout(port._txClear);
+  port._txClear = setTimeout(() => onTXEnd(port), 900);
+}
+
+function onTXEnd(port) {
+  port.tx = false;
+  state.txActive.delete(port.id);
+  $('stat-tx').textContent = String(state.txActive.size).padStart(2, '0');
+  const c = document.getElementById('pnode-' + cssId(port.id));
+  if (c) {
+    c.setAttribute('r', '3.2');
+    c.setAttribute('fill', port.color);
+    c.setAttribute('stroke', port.color);
+    c.setAttribute('filter', 'url(#hot-glow)');
+  }
+}
+
+function onRX(port, decision, sources) {
+  port.rxDec = decision;
+  const col = decColor(decision);
+  if (!col) return;  // silence — no flash
+
+  if (decision === 'collision' || decision === 'sum') {
+    state.collisions++;
+    $('stat-col').textContent = String(state.collisions).padStart(3, '0');
+  } else if (decision === 'capture') {
+    state.captures++;
+    $('stat-cap').textContent = String(state.captures).padStart(3, '0');
+  }
+
+  // Brief receiver flash.
+  const c = document.getElementById('pnode-' + cssId(port.id));
+  if (c) {
+    c.setAttribute('stroke', col);
+    c.setAttribute('stroke-width', '2.2');
+    c.setAttribute('filter', 'url(#loud-glow)');
+    setTimeout(() => {
+      c.setAttribute('stroke', port.color);
+      c.setAttribute('stroke-width', '0.6');
+      c.setAttribute('filter', 'url(#hot-glow)');
+    }, 300);
+  }
+
+  // For each source, spawn a missile-arc pulse from source → here, AND
+  // bump the link's heat so it stays bright for several seconds — short
+  // burst connections like a SABM/UA exchange are otherwise too brief
+  // to notice.
+  for (const src of sources || []) {
+    spawnPulse(src, port.id, col);
+    bumpLinkHeat(src, port.id);
+  }
+
+  // Collision: short red flicker on each contributing source as well —
+  // "interferers identified".
+  if (decision === 'collision' || decision === 'sum') {
+    for (const src of sources || []) {
+      const sc = document.getElementById('pnode-' + cssId(src));
+      if (!sc) continue;
+      sc.setAttribute('stroke', '#ff7575');
+      setTimeout(() => sc.setAttribute('stroke', state.ports.get(src).color), 220);
+    }
+  }
+}
+
+function findLinkPath(srcId, dstId) {
+  for (const l of state.links) {
+    if (l.from === srcId && l.to === dstId) return l.path;
+    if (l.from === dstId && l.to === srcId) {
+      // reverse the path's endpoints
+      const p = l.path;
+      return p && { ax: p.bx, ay: p.by, bx: p.ax, by: p.ay, cx: p.cx, cy: p.cy };
+    }
+  }
+  // fallback: straight line between port centres
+  const a = state.ports.get(srcId), b = state.ports.get(dstId);
+  if (!a || !b) return null;
+  return { ax: a.x, ay: a.y, bx: b.x, by: b.y };
+}
+
+function spawnPulse(srcId, dstId, color) {
+  const path = findLinkPath(srcId, dstId);
+  if (!path) return;
+  // Two visuals layered: a bright head dot + a soft trail that fades.
+  const head = el('circle', {
+    cx: path.ax, cy: path.ay, r: 3.4,
+    fill: color, 'fill-opacity': '0.95',
+    filter: 'url(#loud-glow)',
+  }, layers.pulses);
+  state.pulses.push({
+    head, t0: performance.now(), dur: 600,
+    path, color,
+  });
+}
+
+// One bezier or linear sample helper.
+function pathAt(p, t) {
+  if (p.cx !== undefined) {
+    const u = 1 - t;
+    return {
+      x: u*u*p.ax + 2*u*t*p.cx + t*t*p.bx,
+      y: u*u*p.ay + 2*u*t*p.cy + t*t*p.by,
+    };
+  }
+  return { x: p.ax + (p.bx - p.ax) * t, y: p.ay + (p.by - p.ay) * t };
+}
+
+function bumpLinkHeat(srcId, dstId) {
+  const key = canonicalKey(srcId, dstId);
+  const cur = state.linkHeatByKey.get(key) || 0;
+  // One frame pushes heat all the way to 1. Heat decays linearly over
+  // ~3 s, so a single SABM stays visible long enough to notice.
+  state.linkHeatByKey.set(key, 1);
+  if (cur < 0.01) {
+    // First bump after cold: clear dashes (if any) and switch stroke
+    // colour to a "hot" version so the link reads as ON, not just
+    // "slightly brighter".
+    const elx = state.linkElByKey.get(key);
+    if (elx) {
+      elx.setAttribute('stroke-dasharray', 'none');
+    }
+  }
+}
+
+let lastHeatTick = performance.now();
+function animateHeat(now) {
+  const dt = Math.min((now - lastHeatTick) / 1000, 0.1);
+  lastHeatTick = now;
+  for (const [key, heat] of state.linkHeatByKey) {
+    const next = heat - dt * (1 / 3); // 3-second decay from 1 to 0
+    const elx = state.linkElByKey.get(key);
+    if (next <= 0) {
+      state.linkHeatByKey.delete(key);
+      if (elx) {
+        elx.setAttribute('stroke-opacity', state.linkBaseOp.get(key));
+        elx.setAttribute('stroke-width',   state.linkBaseW.get(key));
+        elx.setAttribute('stroke', state.linkColorByKey.get(key));
+        elx.setAttribute('filter', state.linkFilterByKey.get(key) || '');
+        // restore dashing for town channels
+        const dash = state.linkDashByKey.get(key);
+        if (dash) elx.setAttribute('stroke-dasharray', dash);
+      }
+      continue;
+    }
+    state.linkHeatByKey.set(key, next);
+    if (!elx) continue;
+    const baseW = state.linkBaseW.get(key) ?? 1;
+    // Hot stroke width: up to 5× base. Opacity slams to 1 immediately.
+    elx.setAttribute('stroke-opacity', '1');
+    elx.setAttribute('stroke-width', (baseW * (1 + 4 * next)).toFixed(2));
+    // Brighten toward the link's "hot" colour as heat increases.
+    const baseCol = state.linkColorByKey.get(key);
+    elx.setAttribute('stroke', hotMix(baseCol, next));
+    elx.setAttribute('filter', 'url(#loud-glow)');
+  }
+  requestAnimationFrame(animateHeat);
+}
+
+// Mix a base hex colour toward white by t in [0,1]. Used to make hot
+// links visibly brighter than their idle state.
+function hotMix(hex, t) {
+  if (!hex || !hex.startsWith('#') || hex.length !== 7) return hex || '#fff';
+  const r = parseInt(hex.slice(1, 3), 16);
+  const g = parseInt(hex.slice(3, 5), 16);
+  const b = parseInt(hex.slice(5, 7), 16);
+  const mix = (c) => Math.min(255, Math.round(c + (255 - c) * 0.55 * t));
+  const toHex = (v) => v.toString(16).padStart(2, '0');
+  return '#' + toHex(mix(r)) + toHex(mix(g)) + toHex(mix(b));
+}
+
+function animatePulses(now) {
+  // Expanding TX rings.
+  const keepR = [];
+  for (const r of state.ringSnaps) {
+    const t = (now - r.t0) / r.dur;
+    if (t >= 1) { r.el.remove(); continue; }
+    const rad = r.fromR + (r.toR - r.fromR) * t;
+    r.el.setAttribute('r', rad);
+    r.el.setAttribute('stroke-opacity', String(0.9 * (1 - t)));
+    keepR.push(r);
+  }
+  state.ringSnaps = keepR;
+
+  // Travelling pulses (missile arc style).
+  const keep = [];
+  for (const p of state.pulses) {
+    const t = (now - p.t0) / p.dur;
+    if (t >= 1) { p.head.remove(); continue; }
+    const pos = pathAt(p.path, t);
+    p.head.setAttribute('cx', pos.x);
+    p.head.setAttribute('cy', pos.y);
+    p.head.setAttribute('fill-opacity', String(0.95 * (1 - t * 0.5)));
+    keep.push(p);
+  }
+  state.pulses = keep;
+
+  requestAnimationFrame(animatePulses);
+}
+
+// ============================================================
+// event log
+// ============================================================
+
+const logEl = $('log');
+const MAX_LOG = 40;
+
+function pad(s, n) { s = String(s); return s.length >= n ? s : s + ' '.repeat(n - s.length); }
+
+function addLog(cls, type, body) {
+  const div = document.createElement('div');
+  div.className = 'log-line ' + cls;
+  const t = new Date();
+  const hh = String(t.getHours()).padStart(2,'0');
+  const mm = String(t.getMinutes()).padStart(2,'0');
+  const ss = String(t.getSeconds()).padStart(2,'0');
+  const ms = String(t.getMilliseconds()).padStart(3,'0');
+  div.innerHTML =
+    '<span class="ts">' + hh + ':' + mm + ':' + ss + '.' + ms + '</span>' +
+    '<span class="typ">' + type + '</span>' +
+    '<span class="body">' + body + '</span>';
+  logEl.prepend(div);
+  while (logEl.childElementCount > MAX_LOG) logEl.lastElementChild.remove();
+}
+
+// ============================================================
+// event ingest
+// ============================================================
+
+function handleEvent(ev) {
+  state.eventsThisSecond++;
+  const port = state.ports.get(ev.port);
+  if (!port) return;
+  if (ev.type === 'tx_start') {
+    onTXStart(port);
+    addLog('tx', 'TX↑', pad(ev.port, 18));
+  } else if (ev.type === 'tx_end') {
+    onTXEnd(port);
+    addLog('tx', 'TX↓', pad(ev.port, 18));
+  } else if (ev.type === 'rx_decision') {
+    onRX(port, ev.decision, ev.sources || []);
+    let cls = 'rx';
+    if (ev.decision === 'capture')                                 cls = 'cap';
+    else if (ev.decision === 'collision' || ev.decision === 'sum') cls = 'col';
+    else if (ev.decision === 'silence')                            cls = 'sil';
+    const lbl = ev.decision === 'capture' ? 'CAP'
+              : ev.decision === 'collision' ? 'COL'
+              : ev.decision === 'sum' ? 'SUM'
+              : ev.decision === 'single' ? 'RX'
+              : 'SIL';
+    const src = (ev.sources || []).join(',') || '–';
+    addLog(cls, lbl,
+      pad(ev.port, 18) + '◄ ' + src);
+  }
+}
+
+// ============================================================
+// SSE
+// ============================================================
+
+let sse = null;
+function connect() {
+  if (sse) sse.close();
+  sse = new EventSource('/api/events');
+  $('status-line').textContent = 'CONNECTING';
+  $('status-tag').textContent = '/api/events';
+  sse.onopen = () => {
+    const t = new Date();
+    $('status-line').textContent = 'LIVE';
+    $('status-line').className = '';
+    $('status-since').textContent = 'SINCE ' +
+      String(t.getHours()).padStart(2,'0')+':'+
+      String(t.getMinutes()).padStart(2,'0')+':'+
+      String(t.getSeconds()).padStart(2,'0');
+  };
+  sse.onerror = () => {
+    $('status-line').textContent = 'LINK LOSS';
+    $('status-line').className = 'blink';
+    setTimeout(() => { if (sse.readyState === 2) connect(); }, 1500);
+  };
+  sse.onmessage = (e) => {
+    try { handleEvent(JSON.parse(e.data)); } catch {}
+  };
+}
+
+setInterval(() => {
+  $('stat-eps').textContent = String(state.eventsThisSecond).padStart(2, '0');
+  state.eventsThisSecond = 0;
+}, 1000);
+
+// ============================================================
+// Host CPU% — poll /api/stats once a second, draw a 60-sample
+// sparkline + numeric readout in the top HUD.
+// ============================================================
+const CPU_HIST_LEN = 60;
+const cpuHist = [];
+const cpuSparkSvg = document.getElementById('cpu-spark');
+
+function renderCPUSpark() {
+  const w = cpuSparkSvg.clientWidth || 240;
+  const h = 28;
+  cpuSparkSvg.setAttribute('viewBox', `0 0 ${w} ${h}`);
+  cpuSparkSvg.innerHTML = '';
+  if (cpuHist.length === 0) return;
+  // Bars rather than a line — reads more clearly at this size and
+  // matches the HUD's monospace blockiness.
+  const bw = w / CPU_HIST_LEN;
+  const off = CPU_HIST_LEN - cpuHist.length;
+  for (let i = 0; i < cpuHist.length; i++) {
+    const v = cpuHist[i];
+    if (!isFinite(v)) continue;
+    const bh = Math.max(1, (v / 100) * (h - 1));
+    const x  = (i + off) * bw;
+    const y  = h - bh;
+    let col = '#4ddc97';                    // green: relaxed
+    if (v >= 60) col = '#ffb066';           // amber: noticeable
+    if (v >= 85) col = '#ff5d6a';           // red:   slammed
+    const r = document.createElementNS(SVG_NS, 'rect');
+    r.setAttribute('x', x.toFixed(2));
+    r.setAttribute('y', y.toFixed(2));
+    r.setAttribute('width', Math.max(1, bw - 0.5).toFixed(2));
+    r.setAttribute('height', bh.toFixed(2));
+    r.setAttribute('fill', col);
+    r.setAttribute('opacity', '0.85');
+    cpuSparkSvg.appendChild(r);
+  }
+  // Tick line at 50% for a baseline reference.
+  const half = document.createElementNS(SVG_NS, 'line');
+  half.setAttribute('x1', 0); half.setAttribute('x2', w);
+  half.setAttribute('y1', h / 2); half.setAttribute('y2', h / 2);
+  half.setAttribute('stroke', 'rgba(78,220,169,0.18)');
+  half.setAttribute('stroke-dasharray', '2 4');
+  cpuSparkSvg.appendChild(half);
+}
+
+async function pollCPU() {
+  try {
+    const r = await fetch('/api/stats', { cache: 'no-store' });
+    const j = await r.json();
+    const v = j.host_cpu_pct;
+    if (isFinite(v)) {
+      cpuHist.push(v);
+      if (cpuHist.length > CPU_HIST_LEN) cpuHist.shift();
+      $('stat-cpu').textContent = v.toFixed(0) + '%';
+    }
+  } catch {}
+  renderCPUSpark();
+}
+setInterval(pollCPU, 1000);
+pollCPU();
+
+window.addEventListener('resize', () => { renderStatic(); });
+
+// ============================================================
+// boot
+// ============================================================
+
+(async () => {
+  try {
+    await loadTopology();
+  } catch (err) {
+    $('status-line').textContent = 'TOPOLOGY ERR';
+    $('status-line').className = 'blink';
+    return;
+  }
+  renderStatic();
+  requestAnimationFrame(animatePulses);
+  requestAnimationFrame(animateHeat);
+  connect();
+  // Brief power-on brightness flash. Class removed before any
+  // long-running CSS state can lock it in.
+  document.body.classList.add('flash');
+  setTimeout(() => document.body.classList.remove('flash'), 120);
+})();
+</script>
+</body>
+</html>
