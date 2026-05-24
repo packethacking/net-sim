@@ -423,6 +423,13 @@ func (r *Router) txReader(ctx context.Context, ref config.PortRef, c *tnc.Child)
 	outgoing := r.linkQueues[ref]   // empty slice if this port has no outgoing links
 	tt := r.txTrackers[ref]         // may be nil only if Start partially failed
 
+	// RX-to-TX turnaround: suppress the first N blocks of each
+	// transmission (simulates PLL lock / PA ramp-up).
+	ta := r.cfg.ResolvedTurnaround(ref)
+	rampBlocks := ta.RxToTxMs / 10 // each block ≈ 10 ms
+	var rampRemaining int
+	var wasTXActive bool
+
 	for {
 		n, err := src.Read(buf)
 		if err != nil {
@@ -445,10 +452,13 @@ func (r *Router) txReader(ctx context.Context, ref config.PortRef, c *tnc.Child)
 			if r.opts.Verbose {
 				r.logger.Debug("tx block", "port", ref, "peak", peak, "outgoing", len(outgoing))
 			}
+
+			nowActive := peak >= txActiveThreshold
+
 			// Bump the TX tracker on every active block; the watchdog
 			// goroutine emits tx_start (first bump) and tx_end (after
 			// txSilenceWindow with no further bumps).
-			if r.opts.EventBus != nil && tt != nil && peak >= txActiveThreshold {
+			if r.opts.EventBus != nil && tt != nil && nowActive {
 				tt.lastBusyNanos.Store(time.Now().UnixNano())
 				if !tt.active.Swap(true) {
 					r.opts.EventBus.Publish(events.Event{
@@ -468,6 +478,23 @@ func (r *Router) txReader(ctx context.Context, ref config.PortRef, c *tnc.Child)
 					r.opts.AudioTap.Publish(key, blk)
 				}
 			}
+
+			// RX-to-TX ramp-up: on the rising edge of TX, start
+			// suppressing blocks for rampBlocks ticks. During ramp-up
+			// the radio is keyed but not radiating a decodable signal.
+			if nowActive && !wasTXActive && rampBlocks > 0 {
+				rampRemaining = rampBlocks
+			}
+			if !nowActive {
+				rampRemaining = 0
+			}
+			wasTXActive = nowActive
+
+			if rampRemaining > 0 {
+				rampRemaining--
+				continue // don't route — PA not ready
+			}
+
 			for _, q := range outgoing {
 				q.pushNonBlocking(blk, r.logger)
 			}
@@ -536,6 +563,14 @@ func (r *Router) rxFeeder(ctx context.Context, dst config.PortRef, stdin io.Writ
 	// Resolution order: Port.NoiseDB → Config.DefaultNoiseDB → 0.
 	portNoise := r.portNoiseFloor(dst)
 
+	// TX-to-RX turnaround: after this port stops transmitting, feed
+	// silence for deafBlocks ticks (receiver recovery time).
+	ta := r.cfg.ResolvedTurnaround(dst)
+	deafBlocks := ta.TxToRxMs / 10
+	tt := r.txTrackers[dst]
+	var wasTX bool
+	var deafRemaining int
+
 	// Per-destination RX event state. We emit rx_decision only when the
 	// (decision, source-set) tuple changes since the last block — busy
 	// channels would otherwise generate ~100 events/s/port. lastSources is
@@ -551,6 +586,16 @@ func (r *Router) rxFeeder(ctx context.Context, dst config.PortRef, stdin io.Writ
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+		}
+
+		// TX-to-RX deaf window: detect when own port transitions
+		// from TX to not-TX, then suppress RX for deafBlocks ticks.
+		if tt != nil && deafBlocks > 0 {
+			nowTX := tt.active.Load()
+			if wasTX && !nowTX {
+				deafRemaining = deafBlocks
+			}
+			wasTX = nowTX
 		}
 
 		var active []audio.ActiveTX
@@ -569,6 +614,15 @@ func (r *Router) rxFeeder(ctx context.Context, dst config.PortRef, stdin io.Writ
 		}
 
 		blk, dec := r.mixer.Mix(active)
+
+		// During the deaf window, override the mixed audio with
+		// silence. We still drained the link queues above to avoid
+		// buffering stale audio.
+		if deafRemaining > 0 {
+			blk = audio.Silence()
+			dec = audio.MixSilence
+			deafRemaining--
+		}
 
 		if r.opts.EventBus != nil {
 			srcKey, srcList := summariseSources(sourcePorts)
@@ -694,6 +748,12 @@ func (r *Router) portNoiseFloor(ref config.PortRef) float64 {
 			}
 			if p.NoiseDB > 0 {
 				return p.NoiseDB
+			}
+			if p.Profile != "" {
+				prof := r.cfg.ResolveProfile(p.Profile)
+				if prof.NoiseDB > 0 {
+					return prof.NoiseDB
+				}
 			}
 			return r.cfg.DefaultNoiseDB
 		}

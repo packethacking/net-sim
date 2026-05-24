@@ -199,3 +199,150 @@ links: []
 		t.Fatalf("expected ok, got %v", err)
 	}
 }
+
+func TestDuplicateProfileName(t *testing.T) {
+	yaml := `
+radio_profiles:
+  - name: slow
+    tx_to_rx_ms: 100
+  - name: slow
+    tx_to_rx_ms: 200
+nodes:
+  - id: a
+    ports:
+      - id: vhf
+        modem: { mode: afsk1200 }
+        kiss_port: 8001
+links: []
+`
+	_, err := Parse(strings.NewReader(yaml))
+	if err == nil || !strings.Contains(err.Error(), "duplicate radio_profile") {
+		t.Fatalf("expected duplicate profile error, got %v", err)
+	}
+}
+
+func TestUnknownProfileRef(t *testing.T) {
+	yaml := `
+nodes:
+  - id: a
+    ports:
+      - id: vhf
+        modem: { mode: afsk1200 }
+        kiss_port: 8001
+        profile: nonexistent
+links: []
+`
+	_, err := Parse(strings.NewReader(yaml))
+	if err == nil || !strings.Contains(err.Error(), "unknown profile") {
+		t.Fatalf("expected unknown profile error, got %v", err)
+	}
+}
+
+func TestNegativeTurnaround(t *testing.T) {
+	yaml := `
+nodes:
+  - id: a
+    ports:
+      - id: vhf
+        modem: { mode: afsk1200 }
+        kiss_port: 8001
+        tx_to_rx_ms: -10
+links: []
+`
+	_, err := Parse(strings.NewReader(yaml))
+	if err == nil || !strings.Contains(err.Error(), "tx_to_rx_ms must be >= 0") {
+		t.Fatalf("expected negative turnaround error, got %v", err)
+	}
+}
+
+func TestProfileOverride(t *testing.T) {
+	yaml := `
+radio_profiles:
+  - name: slow
+    tx_to_rx_ms: 100
+    rx_to_tx_ms: 50
+nodes:
+  - id: a
+    ports:
+      - id: vhf
+        modem: { mode: afsk1200 }
+        kiss_port: 8001
+        profile: slow
+        tx_to_rx_ms: 200
+links: []
+`
+	cfg, err := Parse(strings.NewReader(yaml))
+	if err != nil {
+		t.Fatalf("expected ok, got %v", err)
+	}
+	ta := cfg.ResolvedTurnaround(PortRef{NodeID: "a", PortID: "vhf"})
+	if ta.TxToRxMs != 200 {
+		t.Errorf("TxToRxMs = %d, want 200 (port override)", ta.TxToRxMs)
+	}
+	if ta.RxToTxMs != 50 {
+		t.Errorf("RxToTxMs = %d, want 50 (from profile)", ta.RxToTxMs)
+	}
+}
+
+func TestBuiltinProfileRef(t *testing.T) {
+	yaml := `
+nodes:
+  - id: a
+    ports:
+      - id: vhf
+        modem: { mode: afsk1200 }
+        kiss_port: 8001
+        profile: baofeng-uv5r
+links: []
+`
+	cfg, err := Parse(strings.NewReader(yaml))
+	if err != nil {
+		t.Fatalf("expected ok, got %v", err)
+	}
+	ta := cfg.ResolvedTurnaround(PortRef{NodeID: "a", PortID: "vhf"})
+	if ta.TxToRxMs != 300 {
+		t.Errorf("TxToRxMs = %d, want 300 (baofeng-uv5r)", ta.TxToRxMs)
+	}
+	if ta.RxToTxMs != 150 {
+		t.Errorf("RxToTxMs = %d, want 150 (baofeng-uv5r)", ta.RxToTxMs)
+	}
+}
+
+func TestNoProfileNoTurnaround(t *testing.T) {
+	yaml := `
+nodes:
+  - id: a
+    ports:
+      - id: vhf
+        modem: { mode: afsk1200 }
+        kiss_port: 8001
+links: []
+`
+	cfg, err := Parse(strings.NewReader(yaml))
+	if err != nil {
+		t.Fatalf("expected ok, got %v", err)
+	}
+	ta := cfg.ResolvedTurnaround(PortRef{NodeID: "a", PortID: "vhf"})
+	if ta.TxToRxMs != 0 || ta.RxToTxMs != 0 {
+		t.Errorf("expected zero turnaround, got %+v", ta)
+	}
+}
+
+func TestNegativeProfileTurnaround(t *testing.T) {
+	yaml := `
+radio_profiles:
+  - name: bad
+    tx_to_rx_ms: -5
+nodes:
+  - id: a
+    ports:
+      - id: vhf
+        modem: { mode: afsk1200 }
+        kiss_port: 8001
+links: []
+`
+	_, err := Parse(strings.NewReader(yaml))
+	if err == nil || !strings.Contains(err.Error(), "tx_to_rx_ms must be >= 0") {
+		t.Fatalf("expected negative turnaround error, got %v", err)
+	}
+}

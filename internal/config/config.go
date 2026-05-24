@@ -72,6 +72,28 @@ func (m Modem) Equivalent(o Modem) bool {
 	return true
 }
 
+// RadioProfile groups radio-hardware parameters under a reusable name.
+// Ports reference a profile by name; port-level fields override profile
+// values when both are set.
+type RadioProfile struct {
+	Name     string  `yaml:"name"`
+	TxToRxMs int     `yaml:"tx_to_rx_ms,omitempty"`
+	RxToTxMs int     `yaml:"rx_to_tx_ms,omitempty"`
+	NoiseDB  float64 `yaml:"noise_db,omitempty"`
+}
+
+// BuiltinProfiles returns the set of built-in radio profiles keyed by
+// name. User-defined profiles with the same name override these.
+func BuiltinProfiles() map[string]RadioProfile {
+	return map[string]RadioProfile{
+		"ideal":          {Name: "ideal", TxToRxMs: 0, RxToTxMs: 0},
+		"kenwood-th-d74": {Name: "kenwood-th-d74", TxToRxMs: 50, RxToTxMs: 30},
+		"yaesu-ftm-400":  {Name: "yaesu-ftm-400", TxToRxMs: 80, RxToTxMs: 50},
+		"baofeng-uv5r":   {Name: "baofeng-uv5r", TxToRxMs: 300, RxToTxMs: 150},
+		"generic-ht":     {Name: "generic-ht", TxToRxMs: 150, RxToTxMs: 80},
+	}
+}
+
 // Port is one TNC+radio combination — one TNC child process.
 type Port struct {
 	ID       string `yaml:"id"`
@@ -91,6 +113,20 @@ type Port struct {
 	// "quiet RX site" (less noise floor) and lower values for "noisy
 	// urban environment".
 	NoiseDB float64 `yaml:"noise_db,omitempty"`
+
+	// Profile references a RadioProfile by name (built-in or user-defined).
+	Profile string `yaml:"profile,omitempty"`
+
+	// TxToRxMs is the TX-to-RX turnaround time in milliseconds.
+	// After this port stops transmitting, the receiver is deaf for
+	// this duration. Overrides the profile value when set.
+	TxToRxMs int `yaml:"tx_to_rx_ms,omitempty"`
+
+	// RxToTxMs is the RX-to-TX turnaround time in milliseconds.
+	// When this port starts transmitting, the first RxToTxMs of
+	// audio is not routed (simulating PLL lock / PA ramp-up).
+	// Overrides the profile value when set.
+	RxToTxMs int `yaml:"rx_to_tx_ms,omitempty"`
 }
 
 // TNCBackend names the TNC implementation.
@@ -156,8 +192,69 @@ type Config struct {
 	// global floor (back to the old per-link-only behaviour).
 	DefaultNoiseDB float64 `yaml:"default_noise_db,omitempty"`
 
+	RadioProfiles []RadioProfile `yaml:"radio_profiles,omitempty"`
+
 	Nodes []Node `yaml:"nodes"`
 	Links []Link `yaml:"links"`
+}
+
+// Turnaround holds the resolved turnaround times for a port.
+type Turnaround struct {
+	TxToRxMs int
+	RxToTxMs int
+}
+
+// ResolvedTurnaround returns the effective turnaround times for a port,
+// merging port-level overrides with the referenced profile (if any).
+// Port-level values take precedence; profile values fill in the rest;
+// unset values default to 0.
+func (c *Config) ResolvedTurnaround(ref PortRef) Turnaround {
+	var port *Port
+	for ni := range c.Nodes {
+		if c.Nodes[ni].ID != ref.NodeID {
+			continue
+		}
+		for pi := range c.Nodes[ni].Ports {
+			if c.Nodes[ni].Ports[pi].ID == ref.PortID {
+				port = &c.Nodes[ni].Ports[pi]
+				break
+			}
+		}
+	}
+	if port == nil {
+		return Turnaround{}
+	}
+
+	var base RadioProfile
+	if port.Profile != "" {
+		base = c.ResolveProfile(port.Profile)
+	}
+
+	ta := Turnaround{
+		TxToRxMs: base.TxToRxMs,
+		RxToTxMs: base.RxToTxMs,
+	}
+	if port.TxToRxMs != 0 {
+		ta.TxToRxMs = port.TxToRxMs
+	}
+	if port.RxToTxMs != 0 {
+		ta.RxToTxMs = port.RxToTxMs
+	}
+	return ta
+}
+
+// ResolveProfile returns the effective RadioProfile for the given name,
+// checking user-defined profiles first, then built-ins.
+func (c *Config) ResolveProfile(name string) RadioProfile {
+	for _, p := range c.RadioProfiles {
+		if p.Name == name {
+			return p
+		}
+	}
+	if bp, ok := BuiltinProfiles()[name]; ok {
+		return bp
+	}
+	return RadioProfile{}
 }
 
 // Load reads and validates a YAML config file.
@@ -234,6 +331,24 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("config: capture_db must be >= 0, got %g", c.CaptureDB)
 	}
 
+	// Validate radio profiles.
+	profileNames := map[string]bool{}
+	for pi, rp := range c.RadioProfiles {
+		if rp.Name == "" {
+			return fmt.Errorf("config: radio_profiles[%d] has empty name", pi)
+		}
+		if profileNames[rp.Name] {
+			return fmt.Errorf("config: duplicate radio_profile name %q", rp.Name)
+		}
+		profileNames[rp.Name] = true
+		if rp.TxToRxMs < 0 {
+			return fmt.Errorf("config: radio_profile %q: tx_to_rx_ms must be >= 0", rp.Name)
+		}
+		if rp.RxToTxMs < 0 {
+			return fmt.Errorf("config: radio_profile %q: rx_to_tx_ms must be >= 0", rp.Name)
+		}
+	}
+
 	// Build a lookup table and check ID uniqueness.
 	type slot struct {
 		nodeIdx, portIdx int
@@ -277,6 +392,17 @@ func (c *Config) Validate() error {
 			case "", TNCSamoyed, TNCDirewolf:
 			default:
 				return fmt.Errorf("config: %s.%s: unknown tnc %q (must be samoyed|direwolf)", n.ID, p.ID, p.TNC)
+			}
+			if p.Profile != "" && !profileNames[p.Profile] {
+				if _, ok := BuiltinProfiles()[p.Profile]; !ok {
+					return fmt.Errorf("config: %s.%s: unknown profile %q", n.ID, p.ID, p.Profile)
+				}
+			}
+			if p.TxToRxMs < 0 {
+				return fmt.Errorf("config: %s.%s: tx_to_rx_ms must be >= 0", n.ID, p.ID)
+			}
+			if p.RxToTxMs < 0 {
+				return fmt.Errorf("config: %s.%s: rx_to_tx_ms must be >= 0", n.ID, p.ID)
 			}
 			portMap[PortRef{n.ID, p.ID}] = slot{ni, pi}
 		}
