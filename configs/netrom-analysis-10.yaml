@@ -1,0 +1,74 @@
+# Metropolitan 10-node 1200-baud packet radio network for NET/ROM analysis.
+#
+# Topology models a realistic metro area:
+#   n1, n6  — hilltop sites with wide reach (4-5 links)
+#   n2, n4, n8 — mid-elevation (3-4 links)
+#   n3, n5, n7, n9, n10 — valley/suburban (2-3 links)
+#
+# Hidden-node scenarios:
+#   n3 and n5 both hear n1 but cannot hear each other
+#   n7 and n9 both hear n6 but cannot hear each other
+#
+# Path losses model 2-30 km distances over varied terrain.
+# Average connectivity: ~3.6 links per node.
+
+mixer_mode: fm_capture
+capture_db: 6.0
+collision_mode: silence
+
+nodes:
+  - { id: n1,  ports: [{ id: vhf, modem: { mode: afsk1200 }, kiss_port: 8001 }] }
+  - { id: n2,  ports: [{ id: vhf, modem: { mode: afsk1200 }, kiss_port: 8002 }] }
+  - { id: n3,  ports: [{ id: vhf, modem: { mode: afsk1200 }, kiss_port: 8003 }] }
+  - { id: n4,  ports: [{ id: vhf, modem: { mode: afsk1200 }, kiss_port: 8004 }] }
+  - { id: n5,  ports: [{ id: vhf, modem: { mode: afsk1200 }, kiss_port: 8005 }] }
+  - { id: n6,  ports: [{ id: vhf, modem: { mode: afsk1200 }, kiss_port: 8006 }] }
+  - { id: n7,  ports: [{ id: vhf, modem: { mode: afsk1200 }, kiss_port: 8007 }] }
+  - { id: n8,  ports: [{ id: vhf, modem: { mode: afsk1200 }, kiss_port: 8008 }] }
+  - { id: n9,  ports: [{ id: vhf, modem: { mode: afsk1200 }, kiss_port: 8009 }] }
+  - { id: n10, ports: [{ id: vhf, modem: { mode: afsk1200 }, kiss_port: 8010 }] }
+
+links:
+  # n1 (hilltop) — wide reach: n2, n3, n4, n5, n6
+  - { from: n1.vhf, to: n2.vhf, loss_db: 3 }
+  - { from: n2.vhf, to: n1.vhf, loss_db: 3 }
+  - { from: n1.vhf, to: n3.vhf, loss_db: 8 }
+  - { from: n3.vhf, to: n1.vhf, loss_db: 8 }
+  - { from: n1.vhf, to: n4.vhf, loss_db: 10 }
+  - { from: n4.vhf, to: n1.vhf, loss_db: 10 }
+  - { from: n1.vhf, to: n5.vhf, loss_db: 12 }
+  - { from: n5.vhf, to: n1.vhf, loss_db: 12 }
+  - { from: n1.vhf, to: n6.vhf, loss_db: 5 }
+  - { from: n6.vhf, to: n1.vhf, loss_db: 5 }
+
+  # n2 (mid-elevation) — n4, n3, n8
+  - { from: n2.vhf, to: n4.vhf, loss_db: 6 }
+  - { from: n4.vhf, to: n2.vhf, loss_db: 6 }
+  - { from: n2.vhf, to: n3.vhf, loss_db: 10 }
+  - { from: n3.vhf, to: n2.vhf, loss_db: 10 }
+  - { from: n2.vhf, to: n8.vhf, loss_db: 12 }
+  - { from: n8.vhf, to: n2.vhf, loss_db: 12 }
+
+  # n4 (mid-elevation) — n5, n8
+  - { from: n4.vhf, to: n5.vhf, loss_db: 10 }
+  - { from: n5.vhf, to: n4.vhf, loss_db: 10 }
+  - { from: n4.vhf, to: n8.vhf, loss_db: 8 }
+  - { from: n8.vhf, to: n4.vhf, loss_db: 8 }
+
+  # n6 (hilltop) — n7, n8, n9, n10
+  - { from: n6.vhf, to: n7.vhf, loss_db: 9 }
+  - { from: n7.vhf, to: n6.vhf, loss_db: 9 }
+  - { from: n6.vhf, to: n8.vhf, loss_db: 7 }
+  - { from: n8.vhf, to: n6.vhf, loss_db: 7 }
+  - { from: n6.vhf, to: n9.vhf, loss_db: 14 }
+  - { from: n9.vhf, to: n6.vhf, loss_db: 14 }
+  - { from: n6.vhf, to: n10.vhf, loss_db: 18 }
+  - { from: n10.vhf, to: n6.vhf, loss_db: 18 }
+
+  # n7 (suburban) — n10 (marginal path)
+  - { from: n7.vhf, to: n10.vhf, loss_db: 16 }
+  - { from: n10.vhf, to: n7.vhf, loss_db: 16 }
+
+  # n9 (suburban) — n10 (marginal secondary path)
+  - { from: n9.vhf, to: n10.vhf, loss_db: 20 }
+  - { from: n10.vhf, to: n9.vhf, loss_db: 20 }

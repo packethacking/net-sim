@@ -1,0 +1,702 @@
+{
+  "num_nodes": 10,
+  "max_routes": 90,
+  "duration_s": 389.6,
+  "num_snapshots": 19,
+  "convergence_time_s": 70.4,
+  "final_convergence_pct": 100.0,
+  "timeline": [
+    {
+      "t": 0.0,
+      "pct": 91.1,
+      "total": 82
+    },
+    {
+      "t": 23.5,
+      "pct": 96.7,
+      "total": 87
+    },
+    {
+      "t": 47.0,
+      "pct": 96.7,
+      "total": 87
+    },
+    {
+      "t": 70.4,
+      "pct": 100.0,
+      "total": 90
+    },
+    {
+      "t": 93.9,
+      "pct": 100.0,
+      "total": 90
+    },
+    {
+      "t": 117.4,
+      "pct": 100.0,
+      "total": 90
+    },
+    {
+      "t": 140.8,
+      "pct": 100.0,
+      "total": 90
+    },
+    {
+      "t": 164.4,
+      "pct": 100.0,
+      "total": 90
+    },
+    {
+      "t": 204.4,
+      "pct": 100.0,
+      "total": 90
+    },
+    {
+      "t": 222.8,
+      "pct": 100.0,
+      "total": 90
+    },
+    {
+      "t": 241.4,
+      "pct": 100.0,
+      "total": 90
+    },
+    {
+      "t": 259.8,
+      "pct": 100.0,
+      "total": 90
+    },
+    {
+      "t": 278.3,
+      "pct": 100.0,
+      "total": 90
+    },
+    {
+      "t": 296.9,
+      "pct": 100.0,
+      "total": 90
+    },
+    {
+      "t": 315.4,
+      "pct": 100.0,
+      "total": 90
+    },
+    {
+      "t": 333.9,
+      "pct": 100.0,
+      "total": 90
+    },
+    {
+      "t": 352.5,
+      "pct": 100.0,
+      "total": 90
+    },
+    {
+      "t": 371.0,
+      "pct": 100.0,
+      "total": 90
+    },
+    {
+      "t": 389.6,
+      "pct": 100.0,
+      "total": 90
+    }
+  ],
+  "per_node_final": {
+    "n1": {
+      "known_nodes": 9,
+      "routes": [
+        {
+          "dest": "SIM3",
+          "alias": "VALLY",
+          "best_quality": 192,
+          "num_routes": 3
+        },
+        {
+          "dest": "SIM2",
+          "alias": "RIDGE",
+          "best_quality": 192,
+          "num_routes": 3
+        },
+        {
+          "dest": "SIM5",
+          "alias": "EAST",
+          "best_quality": 192,
+          "num_routes": 3
+        },
+        {
+          "dest": "SIM4",
+          "alias": "MIDEL",
+          "best_quality": 192,
+          "num_routes": 3
+        },
+        {
+          "dest": "SIM8",
+          "alias": "SOUTH",
+          "best_quality": 144,
+          "num_routes": 3
+        },
+        {
+          "dest": "SIM6",
+          "alias": "HTOP2",
+          "best_quality": 192,
+          "num_routes": 3
+        },
+        {
+          "dest": "SIM7",
+          "alias": "NORTH",
+          "best_quality": 144,
+          "num_routes": 3
+        },
+        {
+          "dest": "SIM10",
+          "alias": "REMTE",
+          "best_quality": 144,
+          "num_routes": 3
+        },
+        {
+          "dest": "SIM9",
+          "alias": "WEST",
+          "best_quality": 144,
+          "num_routes": 3
+        }
+      ]
+    },
+    "n2": {
+      "known_nodes": 9,
+      "routes": [
+        {
+          "dest": "SIM8",
+          "alias": "SOUTH",
+          "best_quality": 160,
+          "num_routes": 3
+        },
+        {
+          "dest": "SIM1",
+          "alias": "HTOP1",
+          "best_quality": 160,
+          "num_routes": 3
+        },
+        {
+          "dest": "SIM3",
+          "alias": "VALLY",
+          "best_quality": 160,
+          "num_routes": 3
+        },
+        {
+          "dest": "SIM4",
+          "alias": "MIDEL",
+          "best_quality": 160,
+          "num_routes": 3
+        },
+        {
+          "dest": "SIM5",
+          "alias": "EAST",
+          "best_quality": 100,
+          "num_routes": 3
+        },
+        {
+          "dest": "SIM6",
+          "alias": "HTOP2",
+          "best_quality": 100,
+          "num_routes": 3
+        },
+        {
+          "dest": "SIM7",
+          "alias": "NORTH",
+          "best_quality": 75,
+          "num_routes": 3
+        },
+        {
+          "dest": "SIM10",
+          "alias": "REMTE",
+          "best_quality": 75,
+          "num_routes": 3
+        },
+        {
+          "dest": "SIM9",
+          "alias": "WEST",
+          "best_quality": 75,
+          "num_routes": 3
+        }
+      ]
+    },
+    "n3": {
+      "known_nodes": 9,
+      "routes": [
+        {
+          "dest": "SIM1",
+          "alias": "HTOP1",
+          "best_quality": 128,
+          "num_routes": 2
+        },
+        {
+          "dest": "SIM2",
+          "alias": "RIDGE",
+          "best_quality": 128,
+          "num_routes": 2
+        },
+        {
+          "dest": "SIM5",
+          "alias": "EAST",
+          "best_quality": 64,
+          "num_routes": 2
+        },
+        {
+          "dest": "SIM4",
+          "alias": "MIDEL",
+          "best_quality": 64,
+          "num_routes": 2
+        },
+        {
+          "dest": "SIM8",
+          "alias": "SOUTH",
+          "best_quality": 64,
+          "num_routes": 2
+        },
+        {
+          "dest": "SIM6",
+          "alias": "HTOP2",
+          "best_quality": 64,
+          "num_routes": 2
+        },
+        {
+          "dest": "SIM7",
+          "alias": "NORTH",
+          "best_quality": 48,
+          "num_routes": 2
+        },
+        {
+          "dest": "SIM10",
+          "alias": "REMTE",
+          "best_quality": 48,
+          "num_routes": 2
+        },
+        {
+          "dest": "SIM9",
+          "alias": "WEST",
+          "best_quality": 48,
+          "num_routes": 2
+        }
+      ]
+    },
+    "n4": {
+      "known_nodes": 9,
+      "routes": [
+        {
+          "dest": "SIM1",
+          "alias": "HTOP1",
+          "best_quality": 160,
+          "num_routes": 3
+        },
+        {
+          "dest": "SIM2",
+          "alias": "RIDGE",
+          "best_quality": 160,
+          "num_routes": 3
+        },
+        {
+          "dest": "SIM5",
+          "alias": "EAST",
+          "best_quality": 160,
+          "num_routes": 3
+        },
+        {
+          "dest": "SIM8",
+          "alias": "SOUTH",
+          "best_quality": 160,
+          "num_routes": 3
+        },
+        {
+          "dest": "SIM3",
+          "alias": "VALLY",
+          "best_quality": 100,
+          "num_routes": 3
+        },
+        {
+          "dest": "SIM6",
+          "alias": "HTOP2",
+          "best_quality": 100,
+          "num_routes": 3
+        },
+        {
+          "dest": "SIM7",
+          "alias": "NORTH",
+          "best_quality": 75,
+          "num_routes": 3
+        },
+        {
+          "dest": "SIM10",
+          "alias": "REMTE",
+          "best_quality": 75,
+          "num_routes": 3
+        },
+        {
+          "dest": "SIM9",
+          "alias": "WEST",
+          "best_quality": 75,
+          "num_routes": 3
+        }
+      ]
+    },
+    "n5": {
+      "known_nodes": 9,
+      "routes": [
+        {
+          "dest": "SIM1",
+          "alias": "HTOP1",
+          "best_quality": 128,
+          "num_routes": 2
+        },
+        {
+          "dest": "SIM4",
+          "alias": "MIDEL",
+          "best_quality": 128,
+          "num_routes": 2
+        },
+        {
+          "dest": "SIM2",
+          "alias": "RIDGE",
+          "best_quality": 64,
+          "num_routes": 2
+        },
+        {
+          "dest": "SIM3",
+          "alias": "VALLY",
+          "best_quality": 64,
+          "num_routes": 2
+        },
+        {
+          "dest": "SIM8",
+          "alias": "SOUTH",
+          "best_quality": 64,
+          "num_routes": 2
+        },
+        {
+          "dest": "SIM6",
+          "alias": "HTOP2",
+          "best_quality": 64,
+          "num_routes": 2
+        },
+        {
+          "dest": "SIM7",
+          "alias": "NORTH",
+          "best_quality": 48,
+          "num_routes": 2
+        },
+        {
+          "dest": "SIM10",
+          "alias": "REMTE",
+          "best_quality": 48,
+          "num_routes": 2
+        },
+        {
+          "dest": "SIM9",
+          "alias": "WEST",
+          "best_quality": 48,
+          "num_routes": 2
+        }
+      ]
+    },
+    "n6": {
+      "known_nodes": 9,
+      "routes": [
+        {
+          "dest": "SIM8",
+          "alias": "SOUTH",
+          "best_quality": 192,
+          "num_routes": 3
+        },
+        {
+          "dest": "SIM7",
+          "alias": "NORTH",
+          "best_quality": 192,
+          "num_routes": 3
+        },
+        {
+          "dest": "SIM9",
+          "alias": "WEST",
+          "best_quality": 192,
+          "num_routes": 3
+        },
+        {
+          "dest": "SIM1",
+          "alias": "HTOP1",
+          "best_quality": 192,
+          "num_routes": 3
+        },
+        {
+          "dest": "SIM3",
+          "alias": "VALLY",
+          "best_quality": 144,
+          "num_routes": 3
+        },
+        {
+          "dest": "SIM2",
+          "alias": "RIDGE",
+          "best_quality": 144,
+          "num_routes": 3
+        },
+        {
+          "dest": "SIM10",
+          "alias": "REMTE",
+          "best_quality": 192,
+          "num_routes": 3
+        },
+        {
+          "dest": "SIM5",
+          "alias": "EAST",
+          "best_quality": 144,
+          "num_routes": 3
+        },
+        {
+          "dest": "SIM4",
+          "alias": "MIDEL",
+          "best_quality": 144,
+          "num_routes": 3
+        }
+      ]
+    },
+    "n7": {
+      "known_nodes": 9,
+      "routes": [
+        {
+          "dest": "SIM6",
+          "alias": "HTOP2",
+          "best_quality": 128,
+          "num_routes": 2
+        },
+        {
+          "dest": "SIM10",
+          "alias": "REMTE",
+          "best_quality": 128,
+          "num_routes": 2
+        },
+        {
+          "dest": "SIM9",
+          "alias": "WEST",
+          "best_quality": 64,
+          "num_routes": 2
+        },
+        {
+          "dest": "SIM8",
+          "alias": "SOUTH",
+          "best_quality": 64,
+          "num_routes": 2
+        },
+        {
+          "dest": "SIM1",
+          "alias": "HTOP1",
+          "best_quality": 64,
+          "num_routes": 2
+        },
+        {
+          "dest": "SIM3",
+          "alias": "VALLY",
+          "best_quality": 48,
+          "num_routes": 2
+        },
+        {
+          "dest": "SIM2",
+          "alias": "RIDGE",
+          "best_quality": 48,
+          "num_routes": 2
+        },
+        {
+          "dest": "SIM5",
+          "alias": "EAST",
+          "best_quality": 48,
+          "num_routes": 2
+        },
+        {
+          "dest": "SIM4",
+          "alias": "MIDEL",
+          "best_quality": 48,
+          "num_routes": 2
+        }
+      ]
+    },
+    "n8": {
+      "known_nodes": 9,
+      "routes": [
+        {
+          "dest": "SIM4",
+          "alias": "MIDEL",
+          "best_quality": 160,
+          "num_routes": 2
+        },
+        {
+          "dest": "SIM1",
+          "alias": "HTOP1",
+          "best_quality": 100,
+          "num_routes": 3
+        },
+        {
+          "dest": "SIM2",
+          "alias": "RIDGE",
+          "best_quality": 160,
+          "num_routes": 3
+        },
+        {
+          "dest": "SIM5",
+          "alias": "EAST",
+          "best_quality": 100,
+          "num_routes": 3
+        },
+        {
+          "dest": "SIM3",
+          "alias": "VALLY",
+          "best_quality": 100,
+          "num_routes": 3
+        },
+        {
+          "dest": "SIM6",
+          "alias": "HTOP2",
+          "best_quality": 160,
+          "num_routes": 2
+        },
+        {
+          "dest": "SIM7",
+          "alias": "NORTH",
+          "best_quality": 100,
+          "num_routes": 2
+        },
+        {
+          "dest": "SIM10",
+          "alias": "REMTE",
+          "best_quality": 100,
+          "num_routes": 2
+        },
+        {
+          "dest": "SIM9",
+          "alias": "WEST",
+          "best_quality": 100,
+          "num_routes": 2
+        }
+      ]
+    },
+    "n9": {
+      "known_nodes": 9,
+      "routes": [
+        {
+          "dest": "SIM6",
+          "alias": "HTOP2",
+          "best_quality": 128,
+          "num_routes": 2
+        },
+        {
+          "dest": "SIM10",
+          "alias": "REMTE",
+          "best_quality": 128,
+          "num_routes": 2
+        },
+        {
+          "dest": "SIM7",
+          "alias": "NORTH",
+          "best_quality": 64,
+          "num_routes": 2
+        },
+        {
+          "dest": "SIM8",
+          "alias": "SOUTH",
+          "best_quality": 64,
+          "num_routes": 2
+        },
+        {
+          "dest": "SIM1",
+          "alias": "HTOP1",
+          "best_quality": 64,
+          "num_routes": 2
+        },
+        {
+          "dest": "SIM3",
+          "alias": "VALLY",
+          "best_quality": 48,
+          "num_routes": 2
+        },
+        {
+          "dest": "SIM2",
+          "alias": "RIDGE",
+          "best_quality": 48,
+          "num_routes": 2
+        },
+        {
+          "dest": "SIM5",
+          "alias": "EAST",
+          "best_quality": 48,
+          "num_routes": 2
+        },
+        {
+          "dest": "SIM4",
+          "alias": "MIDEL",
+          "best_quality": 48,
+          "num_routes": 2
+        }
+      ]
+    },
+    "n10": {
+      "known_nodes": 9,
+      "routes": [
+        {
+          "dest": "SIM6",
+          "alias": "HTOP2",
+          "best_quality": 128,
+          "num_routes": 3
+        },
+        {
+          "dest": "SIM7",
+          "alias": "NORTH",
+          "best_quality": 128,
+          "num_routes": 3
+        },
+        {
+          "dest": "SIM9",
+          "alias": "WEST",
+          "best_quality": 128,
+          "num_routes": 3
+        },
+        {
+          "dest": "SIM8",
+          "alias": "SOUTH",
+          "best_quality": 64,
+          "num_routes": 3
+        },
+        {
+          "dest": "SIM1",
+          "alias": "HTOP1",
+          "best_quality": 64,
+          "num_routes": 3
+        },
+        {
+          "dest": "SIM3",
+          "alias": "VALLY",
+          "best_quality": 48,
+          "num_routes": 3
+        },
+        {
+          "dest": "SIM2",
+          "alias": "RIDGE",
+          "best_quality": 48,
+          "num_routes": 3
+        },
+        {
+          "dest": "SIM5",
+          "alias": "EAST",
+          "best_quality": 48,
+          "num_routes": 3
+        },
+        {
+          "dest": "SIM4",
+          "alias": "MIDEL",
+          "best_quality": 48,
+          "num_routes": 3
+        }
+      ]
+    }
+  },
+  "traffic": {
+    "total_frames": 498,
+    "nodes_frames": 134,
+    "data_frames": 364
+  }
+}

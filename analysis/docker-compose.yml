@@ -1,0 +1,121 @@
+# NET/ROM analysis stack: 1 net-sim + 10 LinBPQ nodes.
+#
+# All containers use host networking so KISS TCP ports on localhost
+# are directly reachable between containers.
+#
+# Usage:
+#   docker compose -f analysis/docker-compose.yml up -d
+#   # wait for net-sim health check + LinBPQ nodes to connect
+#   docker compose -f analysis/docker-compose.yml down
+
+services:
+  net-sim:
+    image: ghcr.io/packethacking/net-sim:main
+    network_mode: host
+    volumes:
+      - ../configs/netrom-analysis-10.yaml:/etc/sim/network.yaml:ro
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c 'exec 3<>/dev/tcp/127.0.0.1/8080'"]
+      interval: 2s
+      timeout: 2s
+      retries: 60
+
+  n1:
+    image: m0lte/linbpq:latest
+    network_mode: host
+    volumes:
+      - ./nodes/n1:/data
+    depends_on:
+      net-sim:
+        condition: service_healthy
+    restart: on-failure
+
+  n2:
+    image: m0lte/linbpq:latest
+    network_mode: host
+    volumes:
+      - ./nodes/n2:/data
+    depends_on:
+      net-sim:
+        condition: service_healthy
+    restart: on-failure
+
+  n3:
+    image: m0lte/linbpq:latest
+    network_mode: host
+    volumes:
+      - ./nodes/n3:/data
+    depends_on:
+      net-sim:
+        condition: service_healthy
+    restart: on-failure
+
+  n4:
+    image: m0lte/linbpq:latest
+    network_mode: host
+    volumes:
+      - ./nodes/n4:/data
+    depends_on:
+      net-sim:
+        condition: service_healthy
+    restart: on-failure
+
+  n5:
+    image: m0lte/linbpq:latest
+    network_mode: host
+    volumes:
+      - ./nodes/n5:/data
+    depends_on:
+      net-sim:
+        condition: service_healthy
+    restart: on-failure
+
+  n6:
+    image: m0lte/linbpq:latest
+    network_mode: host
+    volumes:
+      - ./nodes/n6:/data
+    depends_on:
+      net-sim:
+        condition: service_healthy
+    restart: on-failure
+
+  n7:
+    image: m0lte/linbpq:latest
+    network_mode: host
+    volumes:
+      - ./nodes/n7:/data
+    depends_on:
+      net-sim:
+        condition: service_healthy
+    restart: on-failure
+
+  n8:
+    image: m0lte/linbpq:latest
+    network_mode: host
+    volumes:
+      - ./nodes/n8:/data
+    depends_on:
+      net-sim:
+        condition: service_healthy
+    restart: on-failure
+
+  n9:
+    image: m0lte/linbpq:latest
+    network_mode: host
+    volumes:
+      - ./nodes/n9:/data
+    depends_on:
+      net-sim:
+        condition: service_healthy
+    restart: on-failure
+
+  n10:
+    image: m0lte/linbpq:latest
+    network_mode: host
+    volumes:
+      - ./nodes/n10:/data
+    depends_on:
+      net-sim:
+        condition: service_healthy
+    restart: on-failure
