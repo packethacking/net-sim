@@ -1,0 +1,78 @@
+{
+  "duration_s": 20.0,
+  "total_events": 64,
+  "total_collisions": 0,
+  "total_captures": 0,
+  "per_port": {
+    "n1.vhf": {
+      "tx_time_s": 0.22,
+      "tx_count": 1,
+      "utilization_pct": 1.1,
+      "collisions": 0,
+      "captures": 0
+    },
+    "n10.vhf": {
+      "tx_time_s": 0.24,
+      "tx_count": 1,
+      "utilization_pct": 1.2,
+      "collisions": 0,
+      "captures": 0
+    },
+    "n2.vhf": {
+      "tx_time_s": 0.49,
+      "tx_count": 2,
+      "utilization_pct": 2.5,
+      "collisions": 0,
+      "captures": 0
+    },
+    "n3.vhf": {
+      "tx_time_s": 0.0,
+      "tx_count": 0,
+      "utilization_pct": 0.0,
+      "collisions": 0,
+      "captures": 0
+    },
+    "n4.vhf": {
+      "tx_time_s": 0.22,
+      "tx_count": 1,
+      "utilization_pct": 1.1,
+      "collisions": 0,
+      "captures": 0
+    },
+    "n5.vhf": {
+      "tx_time_s": 0.0,
+      "tx_count": 0,
+      "utilization_pct": 0.0,
+      "collisions": 0,
+      "captures": 0
+    },
+    "n6.vhf": {
+      "tx_time_s": 0.0,
+      "tx_count": 0,
+      "utilization_pct": 0.0,
+      "collisions": 0,
+      "captures": 0
+    },
+    "n7.vhf": {
+      "tx_time_s": 0.0,
+      "tx_count": 0,
+      "utilization_pct": 0.0,
+      "collisions": 0,
+      "captures": 0
+    },
+    "n8.vhf": {
+      "tx_time_s": 0.21,
+      "tx_count": 1,
+      "utilization_pct": 1.1,
+      "collisions": 0,
+      "captures": 0
+    },
+    "n9.vhf": {
+      "tx_time_s": 0.22,
+      "tx_count": 1,
+      "utilization_pct": 1.1,
+      "collisions": 0,
+      "captures": 0
+    }
+  }
+}
