@@ -438,7 +438,89 @@ NET/ROM is a remarkably durable protocol that has served the amateur radio commu
 
 All modifications presented in this report are implemented as compile-time options in a forked LinBPQ, preserving backward compatibility with the existing protocol. The patches are available in `analysis/linbpq-patches/netrom-improvements.patch`.
 
-## 11. Appendix D: Topology v2 — Multi-Port Backbone + Interference Links
+## 11. INP3 Analysis: BPQ's Implementation Bugs and Their Impact
+
+### 11.1 What is INP3?
+
+INP3 (Internode Protocol 3) extends NET/ROM with:
+- **Measured RTT-based routing**: Probes measure actual round-trip time to neighbours, replacing static quality metrics
+- **RIF (Route Information Frame)**: Event-driven routing updates — nodes send RIFs when route quality changes significantly, rather than waiting for periodic NODES broadcasts
+- **Negative/Positive info propagation**: Worsened routes are propagated within 10 seconds; improved routes within 5 minutes
+- **Coexistence**: INP3 routes are stored alongside NET/ROM routes (3 INP3 + 3 NR per destination), with `PREFERINP3ROUTES` selecting which to prefer
+
+### 11.2 Bugs Found in LinBPQ's INP3 Implementation
+
+We identified **7 bugs**, including 2 critical ones in L3Code.c that affect all routing (not just INP3):
+
+**CRITICAL — L3Code.c line 1460: Assignment instead of comparison**
+```c
+if (DEST->DEST_ROUTE = 7)    // BUG: = not ==
+    DEST->DEST_ROUTE = 1;
+```
+This always assigns 7 then unconditionally assigns 1, so route failover **never tries alternative routes**. When the best route fails, it always resets to route 1 instead of cycling through routes 2-6.
+
+**CRITICAL — L3Code.c line 1025: Wrong array for active route check**
+```c
+if (DEST->INP3ROUTE[DEST->DEST_ROUTE].ROUT_NEIGHBOUR == ROUTE)
+```
+When DEST_ROUTE is 1-3 (NR routes), this indexes INP3ROUTE[1-3] instead of NRROUTE[0-2]. When DEST_ROUTE is 4 (first INP3 route), this reads INP3ROUTE[4] — **out of bounds**. Active routes are never properly cleared on link failure, leaving stale route pointers.
+
+**SIGNIFICANT — BPQINP3.c line 376: RTTIncrement ignores neighbour's SRTT**
+```c
+Route->RTTIncrement = Route->SRTT / 2;
+```
+The spec says RTTIncrement should average local and remote SRTT. The `NeighbourSRTT` field is stored (line 960) but never used. This **underestimates link transit time** in all RIF advertisements.
+
+**SIGNIFICANT — BPQINP3.c line 1800: Route pointer corruption**
+```c
+Route++;    // BUG: corrupts function parameter
+continue;
+```
+In `sendAlltoOneNeigbour`, when skipping self-referential entries, the code increments the `Route` parameter pointer instead of just continuing. All subsequent RIF entries in that refresh cycle are sent to the **wrong neighbour**.
+
+**SIGNIFICANT — BPQINP3.c lines 1806/1808/1547: Wrong RouteLastTT index**
+```c
+lastTT = Dest->RouteLastTT[Entry->ROUT_NEIGHBOUR->recNum];  // BUG: should be Route->recNum
+```
+The "last TT sent" tracking uses the source neighbour's index instead of the destination neighbour's. Change-detection for periodic RIF refresh is broken — some updates are sent repeatedly, others never.
+
+**MINOR — BPQINP3.c line 361: Dead unsigned < 0 check**
+```c
+if (RTT > 60000 || RTT < 0)  // uint32_t can never be < 0
+```
+
+**MINOR — BPQINP3.c line 692: Redundant pointer increment**
+
+### 11.3 Impact: Stock vs Fixed INP3
+
+| Metric | Baseline (no INP3) | Stock INP3 | Fixed INP3 | Improvement |
+|--------|-------------------|------------|------------|-------------|
+| Convergence (s) | 94.3 | **219.9** | **109.9** | -50% vs stock |
+| Total frames | 720 | 691 | **451** | -35% vs stock |
+| NODES frames | 62 (8.6%) | 66 (9.6%) | 48 (10.6%) | -27% vs stock |
+| Avg quality | 122.6 | 123.9 | 122.5 | comparable |
+
+**Stock INP3 is slower than no INP3 at all** (219.9s vs 94.3s). The bugs cause INP3 to interfere with normal NET/ROM routing rather than enhance it. Specifically:
+- The `= vs ==` bug breaks route failover for ALL routes (NR and INP3)
+- The CLEARACTIVEROUTE bug leaves stale route pointers that prevent new routes from being activated
+- Together, these cause the node to get "stuck" on failed routes instead of switching to alternatives
+
+**Fixed INP3 cuts convergence in half** compared to stock (109.9s vs 219.9s) and reduces total traffic by 35% (451 vs 691 frames). The RIF mechanism works correctly once the bugs are fixed — route information propagates through event-driven updates rather than waiting for periodic NODES broadcasts.
+
+### 11.4 Full Comparison Table (v2 Topology)
+
+| Variant | Convergence | Total Frames | NODES % | Avg Quality |
+|---------|-------------|-------------|---------|-------------|
+| Baseline (NET/ROM only) | 94.3s | 720 | 8.6% | 122.6 |
+| TURBO (fast-start) | **79.7s** | 938 | 14.2% | 123.9 |
+| INP3 Fixed | 109.9s | **451** | 10.6% | 122.5 |
+| INP3 Stock (buggy) | 219.9s | 691 | 9.6% | 123.9 |
+| Combined (adaptive+mq) | 141.2s | 598 | 11.9% | 125.0 |
+| SPARK v3 | 156.3s | 681 | 9.1% | 123.8 |
+
+TURBO wins on convergence speed; INP3 Fixed wins on total traffic efficiency. The ideal would be to combine TURBO's fast-start with the fixed INP3 implementation.
+
+## 12. Appendix D: Topology v2 — Multi-Port Backbone + Interference Links
 
 The initial analysis used a simplified single-port, single-frequency topology. Topology v2 addresses two limitations:
 
