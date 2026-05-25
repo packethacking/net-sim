@@ -1,0 +1,134 @@
+# Realistic 10-node 1200-baud metro packet radio network — v2.
+#
+# Improvements over v1:
+#   1. Multi-port backbone nodes (n1, n4, n6, n8) bridge VHF and UHF,
+#      creating two collision domains with a clean backbone between them.
+#   2. Interference links between all VHF nodes that share the same
+#      frequency but are too far apart for reliable decode. These cause
+#      realistic hidden-node collisions.
+#
+# Frequency plan:
+#   VHF 145.010 — all 10 nodes (shared collision domain)
+#   UHF 440.xxx — backbone: n1↔n6 (hilltop-to-hilltop), n4↔n8 (relay)
+#
+# Backbone nodes (2 ports each):
+#   n1  (HTOP1) — VHF + UHF backbone
+#   n4  (MIDEL) — VHF + UHF cross-link
+#   n6  (HTOP2) — VHF + UHF backbone
+#   n8  (SOUTH) — VHF + UHF cross-link
+#
+# Leaf nodes (1 port each):
+#   n2  (RIDGE), n3 (VALLY), n5 (EAST), n7 (NORTH), n9 (WEST), n10 (REMTE)
+#
+# VHF topology (usable links, loss_db ≤ 20):
+#   West cluster: n1—n2—n4—n5, n1—n3, n2—n3
+#   East cluster: n6—n7—n10, n6—n9—n10, n6—n8
+#   Cross-area:   n2—n8, n4—n8 (mid-elevation relay on VHF)
+#   Hilltop:      n1—n6 on VHF (marginal, 18 dB) — UHF is preferred
+#
+# VHF interference (loss_db 22-30, causes collisions, can't decode):
+#   n3↔n5, n5↔n6, n3↔n4, n7↔n9, n1↔n7, n1↔n9, n2↔n6,
+#   n4↔n6, n5↔n8, n2↔n5
+
+mixer_mode: fm_capture
+capture_db: 6.0
+collision_mode: silence
+
+nodes:
+  # Backbone nodes: 2 ports each (VHF + UHF)
+  - id: n1
+    ports:
+      - { id: vhf, modem: { mode: afsk1200 }, kiss_port: 8001 }
+      - { id: uhf, modem: { mode: afsk1200 }, kiss_port: 8011 }
+  - id: n4
+    ports:
+      - { id: vhf, modem: { mode: afsk1200 }, kiss_port: 8004 }
+      - { id: uhf, modem: { mode: afsk1200 }, kiss_port: 8014 }
+  - id: n6
+    ports:
+      - { id: vhf, modem: { mode: afsk1200 }, kiss_port: 8006 }
+      - { id: uhf, modem: { mode: afsk1200 }, kiss_port: 8016 }
+  - id: n8
+    ports:
+      - { id: vhf, modem: { mode: afsk1200 }, kiss_port: 8008 }
+      - { id: uhf, modem: { mode: afsk1200 }, kiss_port: 8018 }
+
+  # Leaf nodes: 1 port each (VHF only)
+  - { id: n2,  ports: [{ id: vhf, modem: { mode: afsk1200 }, kiss_port: 8002 }] }
+  - { id: n3,  ports: [{ id: vhf, modem: { mode: afsk1200 }, kiss_port: 8003 }] }
+  - { id: n5,  ports: [{ id: vhf, modem: { mode: afsk1200 }, kiss_port: 8005 }] }
+  - { id: n7,  ports: [{ id: vhf, modem: { mode: afsk1200 }, kiss_port: 8007 }] }
+  - { id: n9,  ports: [{ id: vhf, modem: { mode: afsk1200 }, kiss_port: 8009 }] }
+  - { id: n10, ports: [{ id: vhf, modem: { mode: afsk1200 }, kiss_port: 8010 }] }
+
+links:
+  # ===== UHF BACKBONE (separate collision domain, clean links) =====
+  - { from: n1.uhf, to: n6.uhf, loss_db: 2 }
+  - { from: n6.uhf, to: n1.uhf, loss_db: 2 }
+  - { from: n4.uhf, to: n8.uhf, loss_db: 5 }
+  - { from: n8.uhf, to: n4.uhf, loss_db: 5 }
+
+  # ===== VHF USABLE LINKS (can decode, loss_db ≤ 20) =====
+  # West cluster
+  - { from: n1.vhf, to: n2.vhf, loss_db: 3 }
+  - { from: n2.vhf, to: n1.vhf, loss_db: 3 }
+  - { from: n1.vhf, to: n3.vhf, loss_db: 8 }
+  - { from: n3.vhf, to: n1.vhf, loss_db: 8 }
+  - { from: n1.vhf, to: n4.vhf, loss_db: 10 }
+  - { from: n4.vhf, to: n1.vhf, loss_db: 10 }
+  - { from: n1.vhf, to: n5.vhf, loss_db: 14 }
+  - { from: n5.vhf, to: n1.vhf, loss_db: 14 }
+  - { from: n2.vhf, to: n3.vhf, loss_db: 10 }
+  - { from: n3.vhf, to: n2.vhf, loss_db: 10 }
+  - { from: n2.vhf, to: n4.vhf, loss_db: 6 }
+  - { from: n4.vhf, to: n2.vhf, loss_db: 6 }
+  - { from: n4.vhf, to: n5.vhf, loss_db: 10 }
+  - { from: n5.vhf, to: n4.vhf, loss_db: 10 }
+
+  # East cluster
+  - { from: n6.vhf, to: n7.vhf, loss_db: 9 }
+  - { from: n7.vhf, to: n6.vhf, loss_db: 9 }
+  - { from: n6.vhf, to: n8.vhf, loss_db: 7 }
+  - { from: n8.vhf, to: n6.vhf, loss_db: 7 }
+  - { from: n6.vhf, to: n9.vhf, loss_db: 14 }
+  - { from: n9.vhf, to: n6.vhf, loss_db: 14 }
+  - { from: n6.vhf, to: n10.vhf, loss_db: 18 }
+  - { from: n10.vhf, to: n6.vhf, loss_db: 18 }
+  - { from: n7.vhf, to: n10.vhf, loss_db: 16 }
+  - { from: n10.vhf, to: n7.vhf, loss_db: 16 }
+  - { from: n9.vhf, to: n10.vhf, loss_db: 20 }
+  - { from: n10.vhf, to: n9.vhf, loss_db: 20 }
+
+  # Cross-area on VHF (mid-elevation relay)
+  - { from: n2.vhf, to: n8.vhf, loss_db: 14 }
+  - { from: n8.vhf, to: n2.vhf, loss_db: 14 }
+  - { from: n4.vhf, to: n8.vhf, loss_db: 10 }
+  - { from: n8.vhf, to: n4.vhf, loss_db: 10 }
+
+  # Hilltop-to-hilltop on VHF (marginal, UHF preferred)
+  - { from: n1.vhf, to: n6.vhf, loss_db: 18 }
+  - { from: n6.vhf, to: n1.vhf, loss_db: 18 }
+
+  # ===== VHF INTERFERENCE LINKS (can't decode, cause collisions) =====
+  # These model distant VHF stations on the same frequency whose signals
+  # are too weak to decode but strong enough to corrupt concurrent reception.
+  - { from: n3.vhf, to: n5.vhf, loss_db: 28 }
+  - { from: n5.vhf, to: n3.vhf, loss_db: 28 }
+  - { from: n3.vhf, to: n4.vhf, loss_db: 22 }
+  - { from: n4.vhf, to: n3.vhf, loss_db: 22 }
+  - { from: n5.vhf, to: n6.vhf, loss_db: 25 }
+  - { from: n6.vhf, to: n5.vhf, loss_db: 25 }
+  - { from: n7.vhf, to: n9.vhf, loss_db: 28 }
+  - { from: n9.vhf, to: n7.vhf, loss_db: 28 }
+  - { from: n1.vhf, to: n7.vhf, loss_db: 25 }
+  - { from: n7.vhf, to: n1.vhf, loss_db: 25 }
+  - { from: n1.vhf, to: n9.vhf, loss_db: 28 }
+  - { from: n9.vhf, to: n1.vhf, loss_db: 28 }
+  - { from: n2.vhf, to: n6.vhf, loss_db: 24 }
+  - { from: n6.vhf, to: n2.vhf, loss_db: 24 }
+  - { from: n2.vhf, to: n5.vhf, loss_db: 22 }
+  - { from: n5.vhf, to: n2.vhf, loss_db: 22 }
+  - { from: n4.vhf, to: n6.vhf, loss_db: 25 }
+  - { from: n6.vhf, to: n4.vhf, loss_db: 25 }
+  - { from: n5.vhf, to: n8.vhf, loss_db: 26 }
+  - { from: n8.vhf, to: n5.vhf, loss_db: 26 }
