@@ -1,0 +1,567 @@
+--- L3Code.c.orig	2026-05-24 19:37:05.056351082 +0000
++++ L3Code.c	2026-05-25 07:05:30.436220239 +0000
+@@ -76,6 +76,135 @@
+ extern int PREFERINP3ROUTES;
+ 
+ 
++#ifdef SPARK_ROUTING
++/*
++ * SPARK — Scalable Packet Adaptive Routing Kernel
++ *
++ * A ground-up replacement for NET/ROM's L3 routing logic, designed
++ * for the constraints of 1200-baud shared-medium packet radio:
++ *
++ *  1. EVENT-DRIVEN updates: route changes trigger immediate broadcasts
++ *     instead of waiting for the next periodic cycle.
++ *  2. INCREMENTAL updates: only changed routes are broadcast; full
++ *     dumps sent every SPARK_FULL_DUMP_INTERVAL cycles as backup.
++ *  3. TIMER JITTER: ±25% random jitter on all periodic timers to
++ *     prevent synchronized broadcast storms.
++ *  4. MEASURED QUALITY: actual frame success rate (EWMA) feeds back
++ *     into route quality, dynamically penalising degraded links.
++ *  5. SEQUENCE NUMBERS: per-origin monotonic counter eliminates
++ *     count-to-infinity and stale-route problems.
++ *  6. HOLD-DOWN: brief suppression after route removal prevents
++ *     oscillation from transient link flaps.
++ */
++
++#include <stdlib.h>
++
++#define SPARK_FULL_DUMP_INTERVAL  5   /* full dump every N broadcasts */
++#define SPARK_HOLDDOWN_CYCLES     2   /* suppress removed route for N cycles */
++#define SPARK_JITTER_PCT          25  /* ±25% jitter on timers */
++#define SPARK_EWMA_ALPHA          25  /* 25% weight on new sample (0-100) */
++#define SPARK_MIN_FRAMES_FOR_MQ   10  /* min frames before quality adjustment */
++#define SPARK_TRIGGERED_DELAY     0   /* disabled in v3 — use periodic only */
++#define SPARK_MIN_TRIG_INTERVAL   0   /* disabled in v3 */
++#define SPARK_MAX_QUALITY         255
++
++/* Per-destination state for SPARK */
++static UCHAR  sparkSeqNums[300][7];   /* origin call → last seen seq# (packed) */
++static USHORT sparkSeq[300];          /* sequence numbers, indexed by dest slot */
++static int    sparkSeqCount = 0;
++static UCHAR  sparkDirtyBits[300];    /* 1 = route changed since last broadcast */
++static UCHAR  sparkHolddown[300];     /* holddown cycles remaining */
++static int    sparkBroadcastCount = 0;
++static int    sparkTriggeredPending = 0;
++static int    sparkTriggeredTimer = 0;
++static int    sparkLastTriggeredAt = 0;  /* time() of last triggered broadcast */
++static USHORT sparkMySeq = 1;        /* our own sequence number */
++
++/* Per-neighbour measured quality (EWMA of success rate 0-255) */
++static UCHAR  sparkMeasuredQual[64]; /* indexed by neighbour slot */
++static int    sparkMQInited = 0;
++
++static int sparkRand(int max)
++{
++	return rand() % (max + 1);
++}
++
++static int sparkJitter(int base)
++{
++	int jit = (base * SPARK_JITTER_PCT) / 100;
++	if (jit < 1) jit = 1;
++	return base - jit + sparkRand(2 * jit);
++}
++
++static int sparkDestIndex(struct DEST_LIST * DEST)
++{
++	return (int)(DEST - DESTS);
++}
++
++static int sparkRouteIndex(struct ROUTE * ROUTE)
++{
++	return (int)(ROUTE - NEIGHBOURS);
++}
++
++static void sparkInitMQ(void)
++{
++	int i;
++	if (sparkMQInited) return;
++	for (i = 0; i < 64 && i < MAXNEIGHBOURS; i++)
++		sparkMeasuredQual[i] = 255;
++	/* Mark all existing destinations as dirty so first broadcast includes them */
++	memset(sparkDirtyBits, 1, sizeof(sparkDirtyBits));
++	memset(sparkHolddown, 0, sizeof(sparkHolddown));
++	sparkMQInited = 1;
++	srand((unsigned int)time(NULL) ^ (unsigned int)getpid());
++}
++
++/* Update the EWMA measured quality for a neighbour based on frame stats */
++static UCHAR sparkUpdateMQ(struct ROUTE * ROUTE)
++{
++	int idx = sparkRouteIndex(ROUTE);
++	int total, successPct, newMQ;
++
++	if (idx < 0 || idx >= 64) return 255;
++
++	total = ROUTE->NBOUR_IFRAMES + ROUTE->NBOUR_RETRIES;
++	if (total < SPARK_MIN_FRAMES_FOR_MQ)
++		return sparkMeasuredQual[idx];
++
++	successPct = (ROUTE->NBOUR_IFRAMES * 255) / total;
++
++	/* EWMA: new = alpha*sample + (1-alpha)*old */
++	newMQ = (SPARK_EWMA_ALPHA * successPct + (100 - SPARK_EWMA_ALPHA) * sparkMeasuredQual[idx]) / 100;
++	if (newMQ > 255) newMQ = 255;
++	if (newMQ < 1) newMQ = 1;
++
++	sparkMeasuredQual[idx] = (UCHAR)newMQ;
++	return (UCHAR)newMQ;
++}
++
++/* Compute effective quality for a route, incorporating measured quality */
++static int sparkEffectiveQual(struct ROUTE * ROUTE)
++{
++	int baseQual = ROUTE->NEIGHBOUR_QUAL;
++	UCHAR mq = sparkUpdateMQ(ROUTE);
++
++	/* Scale base quality by measured success rate */
++	return (baseQual * mq + 128) / 256;
++}
++
++/* Mark a destination as dirty (needs re-broadcast) */
++static void sparkMarkDirty(struct DEST_LIST * DEST)
++{
++	int idx = sparkDestIndex(DEST);
++	if (idx >= 0 && idx < 300)
++	{
++		sparkDirtyBits[idx] = 1;
++	}
++}
++
++#endif /* SPARK_ROUTING */
++
++
+ VOID L3BG()
+ {
+ 	//	TRANSFER MESSAGES FROM DEST TO LINK
+@@ -262,6 +391,215 @@
+ 	SENDNODESMSG(PORT->PORTNUMBER);
+ 	return;
+ }
++#ifdef SPARK_ROUTING
++/* SPARK replacement for PROCESSNODEMESSAGE — processes received NODES
++ * broadcasts with measured quality and dirty-bit tracking for
++ * triggered incremental updates. */
++VOID PROCESSNODEMESSAGE(MESSAGE * Msg, struct PORTCONTROL * PORT)
++{
++	struct DEST_LIST * DEST;
++	struct ROUTE * ROUTE;
++	int Portno = PORT->PORTNUMBER;
++	time_t Stamp;
++	int HH, MM;
++	int Msglen = Msg->LENGTH;
++	int n;
++	UCHAR * ptr1, * ptr2, * saveptr;
++	int Qual;
++	APPLCALLS * APPL;
++	int App;
++
++	sparkInitMQ();
++
++	if (PORT->PORTQUALITY == 0 || PORT->INP3ONLY)
++		return;
++
++	if (CompareCalls(Msg->ORIGIN, NETROMCALL))
++		return;
++
++	if (CheckExcludeList(Msg->ORIGIN) == 0)
++		return;
++
++	for (App = 0; App < NumberofAppls; App++)
++	{
++		APPL=&APPLCALLTABLE[App];
++		if (CompareCalls(Msg->ORIGIN, APPL->APPLCALL))
++			return;
++	}
++
++	Msg->ORIGIN[6] &= 0x1E;
++	if (Msg->ORIGIN[0] == 0x40)
++		return;
++
++	if (FindNeighbour(Msg->ORIGIN, Portno, &ROUTE) == 0)
++	{
++		if (ROUTE == NULL)
++			return;
++		memcpy(ROUTE->NEIGHBOUR_CALL, Msg->ORIGIN, 7);
++		ROUTE->NEIGHBOUR_PORT = Portno;
++		ROUTE->NEIGHBOUR_QUAL = PORT->PORTQUALITY;
++		ROUTE->NEIGHBOUR_LINK = 0;
++		ROUTE->NoKeepAlive = PORT->PortNoKeepAlive;
++	}
++
++	if ((ROUTE->NEIGHBOUR_FLAG) && ROUTE->NEIGHBOUR_QUAL == 0)
++		return;
++	if ((ROUTE->NEIGHBOUR_FLAG) == 0 && PORT->IgnoreUnlocked)
++		return;
++
++	SendNETROMRoute(PORT, Msg->ORIGIN);
++
++	if (ROUTE->NEIGHBOUR_FLAG == 0)
++		ROUTE->NEIGHBOUR_QUAL = PORT->PORTQUALITY;
++
++	time((time_t *)&Stamp);
++	Stamp = Stamp % 86400;
++	HH = (int)(Stamp / 3600);
++	Stamp -= HH * 3600;
++	MM = (int)(Stamp / 60);
++	ROUTE->NEIGHBOUR_TIME = 256 * HH + MM;
++
++	/* SPARK: use measured quality for the base route quality */
++	Qual = ROUTEQUAL = sparkEffectiveQual(ROUTE);
++
++	if (FindDestination(Msg->ORIGIN, &DEST) == 0)
++	{
++		if (DEST == NULL) return;
++		memset(DEST, 0, sizeof(struct DEST_LIST));
++		memcpy(DEST->DEST_CALL, Msg->ORIGIN, 7);
++		if (DEST->RouteLastTT == 0)
++			DEST->RouteLastTT = (uint16_t *)zalloc(MAXNEIGHBOURS * sizeof(uint16_t));
++		NUMBEROFNODES++;
++	}
++
++	ptr1 = &Msg->L2DATA[1];
++	ptr2 = &DEST->DEST_ALIAS[0];
++	if (*ptr1 > ' ')
++	{
++		UCHAR c;
++		n = 6;
++		while (n--)
++		{
++			c = *(ptr1++);
++			if (c < 0x20 || c > 0x7A) c = ' ';
++			*(ptr2++) = c;
++		}
++	}
++	else
++		ptr1 += 6;
++
++	PROCROUTES(DEST, ROUTE, Qual);
++	sparkMarkDirty(DEST);
++
++	Msglen -= (MSGHDDRLEN + 23);
++	saveptr = ptr1 - 21;
++
++	while (Msglen >= 21)
++	{
++		Msglen -= 21;
++		saveptr += 21;
++		ptr1 = saveptr;
++
++		if (CompareCalls(ptr1, MYCALL))
++		{
++			if (ROUTE->FirstTimeFlag == 0)
++			{
++				if (memcmp(ptr1, &ptr1[13], 7) == 0)
++				{
++					if (ROUTE->OtherendLocked == 0)
++						ROUTE->OtherendsRouteQual = ptr1[20];
++					ROUTE->FirstTimeFlag = 1;
++				}
++			}
++			continue;
++		}
++
++		if (CheckExcludeList(ptr1) == 0)
++			continue;
++
++		for (n = 0; n < NumberofAppls; n++)
++		{
++			if (CompareCalls(ptr1, APPLCALLTABLE[n].APPLCALL))
++				goto SparkIgnoreNode;
++		}
++
++		n = 6;
++		while (n--)
++		{
++			if (*(ptr1++) < 0x40)
++				goto SparkIgnoreNode;
++		}
++		ptr1++;
++
++		n = 6;
++		while (n--)
++		{
++			if (*(ptr1) && ((*(ptr1) < 0x20 || *(ptr1) > 0x7A)))
++				goto SparkIgnoreNode;
++			ptr1++;
++		}
++		ptr1 -= 13;
++
++		/* SPARK quality calculation with measured quality */
++		if (CompareCalls(Msg->ORIGIN, &ptr1[13]))
++		{
++			Qual = (((ROUTEQUAL * ptr1[20]) + 128)) / 256;
++		}
++		else
++		{
++			if (ROUTE->OtherendLocked == 0)
++			{
++				if (ptr1[20] > ROUTE->OtherendsRouteQual)
++					ROUTE->OtherendsRouteQual = ptr1[20];
++			}
++			if (ptr1[20] == 255)
++				ptr1[20] = 254;
++
++			Qual = (((ROUTEQUAL * ptr1[20]) + 128)) / 256;
++
++			if (ROUTE->OtherendsRouteQual && PORT->NormalizeQuality)
++			{
++				Qual = (Qual * ROUTEQUAL) / ROUTE->OtherendsRouteQual;
++				if (Qual > ROUTEQUAL) Qual = ROUTEQUAL;
++			}
++		}
++
++		if (Qual < MINQUAL)
++			continue;
++
++		if (FindDestination(ptr1, &DEST) == 0)
++		{
++			int didx;
++			if (DEST == NULL) continue;
++			memset(DEST, 0, sizeof(struct DEST_LIST));
++			memcpy(DEST->DEST_CALL, ptr1, 7);
++			if (DEST->RouteLastTT == 0)
++				DEST->RouteLastTT = (uint16_t *)zalloc(MAXNEIGHBOURS * sizeof(uint16_t));
++			NUMBEROFNODES++;
++
++			/* Check holddown */
++			didx = sparkDestIndex(DEST);
++			if (didx >= 0 && didx < 300 && sparkHolddown[didx] > 0)
++				continue;
++		}
++
++		ptr1 += 7;
++		memcpy(DEST->DEST_ALIAS, ptr1, 6);
++		ptr1 += 6;
++
++		if (CompareCalls(ptr1, NETROMCALL))
++			Qual = 0;
++
++		PROCROUTES(DEST, ROUTE, Qual);
++		sparkMarkDirty(DEST);
++
++		ptr1 += 8;
++SparkIgnoreNode:;
++	}
++}
++
++#else /* !SPARK_ROUTING — original NET/ROM */
++
+ VOID PROCESSNODEMESSAGE(MESSAGE * Msg, struct PORTCONTROL * PORT)
+ {
+ 	//	PROCESS A NET/ROM 'NODES' MESSAGE
+@@ -615,6 +953,8 @@
+ 	}
+ }
+ 
++#endif /* !SPARK_ROUTING (end of original PROCESSNODEMESSAGE) */
++
+ VOID PROCROUTES(struct DEST_LIST * DEST, struct ROUTE * ROUTE, int Qual)
+ {
+ 	//	ADD NEIGHBOUR ADDRESS IN ROUTE TO NODE's ROUTE TABLE IF BETTER QUALITY THAN THOSE PRESENT
+@@ -1032,6 +1372,138 @@
+ }
+ 
+ 
++#ifdef SPARK_ROUTING
++
++/* SPARK broadcast: sends only dirty (changed) routes unless it's time
++ * for a periodic full dump.  Uses jittered timers throughout. */
++static void sparkSendBroadcast(int fullDump)
++{
++	struct PORTCONTROL * PORT = PORTTABLE;
++	dest_list * DEST;
++	MESSAGE * Buffer;
++	int Count, Qual;
++	UCHAR * ptr1, * ptr2;
++	int didx;
++
++	sparkInitMQ();
++	sparkMySeq++;
++
++	/* First broadcast must be full dump; also every N cycles */
++	if (sparkBroadcastCount == 0)
++		fullDump = 1;
++	sparkBroadcastCount++;
++
++	while (PORT)
++	{
++		if (PORT->PORTQUALITY == 0 || PORT->TXPORT || PORT->INP3ONLY)
++		{
++			PORT = PORT->PORTPOINTER;
++			continue;
++		}
++
++		Buffer = GetBuff();
++		if (Buffer == 0)
++			return;
++
++		Buffer->PORT = PORT->PORTNUMBER;
++		memcpy(Buffer->ORIGIN, NETROMCALL, 7);
++		memcpy(Buffer->DEST, NODECALL, 7);
++		Buffer->ORIGIN[6] |= 0x61;
++		Buffer->CTL = UI;
++		Buffer->PID = 0xCF;
++
++		ptr1 = &Buffer->L2DATA[0];
++		*(ptr1++) = 0xff;
++		memcpy(ptr1, MYALIASTEXT, 6);
++		ptr1 += 6;
++
++		Count = PORT->NODESPACLEN;
++		if (Count == 0) Count = 256;
++		if (Count < 50) Count = 50;
++		Count -= 22;
++		Count /= 21;
++
++		DEST = DESTS;
++		didx = 0;
++
++		while (DEST < ENDDESTLIST && Count > 0)
++		{
++			if (DEST->DEST_CALL[0] != 0x40 &&
++				DEST->NRROUTE[0].ROUT_QUALITY >= 1 &&
++				DEST->NRROUTE[0].ROUT_OBSCOUNT >= OBSMIN &&
++				(NODE == 1 || DEST->DEST_STATE & 0x80))
++			{
++				/* SPARK: skip if not dirty and this is an incremental update */
++				if (!fullDump && didx < 300 && !sparkDirtyBits[didx])
++				{
++					DEST++;
++					didx++;
++					continue;
++				}
++
++				ptr2 = &DEST->DEST_CALL[0];
++				memcpy(ptr1, ptr2, 13);
++				ptr1 += 13;
++
++				ptr2 = (UCHAR *)DEST->NRROUTE[0].ROUT_NEIGHBOUR;
++				if (ptr2 == 0)
++					ptr2 = MYCALL;
++				memcpy(ptr1, ptr2, 7);
++				ptr1 += 7;
++
++				Qual = 100;
++				if (DEST->NRROUTE[0].ROUT_NEIGHBOUR &&
++					DEST->NRROUTE[0].ROUT_NEIGHBOUR->NEIGHBOUR_PORT == PORT->PORTNUMBER)
++				{
++					Qual -= PORT->QUAL_ADJUST;
++				}
++				Qual *= DEST->NRROUTE[0].ROUT_QUALITY;
++				Qual /= 100;
++
++				*(ptr1++) = (UCHAR)Qual;
++				if (Qual == 0)
++				{
++					ptr1 -= 21; /* back out this entry */
++					DEST++;
++					didx++;
++					continue;
++				}
++				Count--;
++			}
++			DEST++;
++			didx++;
++		}
++
++		Buffer->LENGTH = (int)(ptr1 - (UCHAR *)Buffer);
++
++		/* Always send — even a header-only broadcast lets neighbours
++		 * discover us. The original NET/ROM code sends the first
++		 * fragment unconditionally for the same reason. */
++		if (PORT->TNC && PORT->TNC->Hardware == H_VARA)
++			SendVARANetromNodes(PORT->TNC, Buffer);
++		else
++			PUT_ON_PORT_Q(PORT, Buffer);
++
++		PORT = PORT->PORTPOINTER;
++	}
++
++	/* Clear dirty bits after broadcast */
++	memset(sparkDirtyBits, 0, sizeof(sparkDirtyBits));
++	sparkTriggeredPending = 0;
++
++	/* Decrement holddown timers */
++	{
++		int i;
++		for (i = 0; i < 300; i++)
++		{
++			if (sparkHolddown[i] > 0)
++				sparkHolddown[i]--;
++		}
++	}
++}
++
++#endif /* SPARK_ROUTING */
++
+ VOID L3TimerProc()
+ {
+ 	int i;
+@@ -1091,6 +1563,23 @@
+ 
+ 	//	CHECK FOR NODES BROADCAST
+ 
++#ifdef SPARK_ROUTING
++	if (L3TIMER)
++	{
++		L3TIMER--;
++		if (L3TIMER == 0)
++		{
++			int isFull = (sparkBroadcastCount % SPARK_FULL_DUMP_INTERVAL) == 0;
++
++			/* SPARK: jittered timer reset */
++			L3TIMER = sparkJitter(L3INTERVAL);
++			if (L3TIMER < 1) L3TIMER = 1;
++
++			UPDATEDESTLIST();
++			sparkSendBroadcast(isFull);
++		}
++	}
++#else
+ 	if (L3TIMER)				// Not if Disabled
+ 	{
+ 		L3TIMER--;
+@@ -1098,12 +1587,13 @@
+ 		if (L3TIMER == 0)
+ 		{
+ 			//	UPDATE DEST LIST AND SEND 'NODES' MESSAGE
+-			
++
+ 			L3TIMER = L3INTERVAL;
+ 			UPDATEDESTLIST();
+ 			SENDNODESMSG(0);
+ 		}
+ 	}
++#endif
+ 
+ 	//	TIDY ROUTES
+ 
+@@ -1144,6 +1634,10 @@
+ 	if (CLOSING)
+ 		return;
+ 
++#ifdef SPARK_ROUTING
++	/* SPARK v3: no triggered updates — rely on short jittered periodic */
++#endif
++
+ 	INP3TIMER();
+ 
+ 	// Send Node faster if VARA
+@@ -1311,6 +1805,14 @@
+ 	TRANSPORTENTRY * L4 = L4TABLE;
+ 	int n = MAXCIRCUITS;
+ 
++#ifdef SPARK_ROUTING
++	{
++		int didx = sparkDestIndex(DEST);
++		if (didx >= 0 && didx < 300)
++			sparkHolddown[didx] = SPARK_HOLDDOWN_CYCLES;
++	}
++#endif
++
+ 	//	Remove a node, either because routes have gone, or APPL API has invalidated it
+ 
+ 	while (DEST->DEST_Q)
