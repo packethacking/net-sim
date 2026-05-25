@@ -1,0 +1,268 @@
+--- L3Code.c.orig	2026-05-24 19:37:05.056351082 +0000
++++ L3Code.c	2026-05-25 08:48:07.346708643 +0000
+@@ -75,6 +75,110 @@
+ 
+ extern int PREFERINP3ROUTES;
+ 
++#ifdef TURBO_ROUTING
++/*
++ * TURBO — optimised NET/ROM routing designed to beat stock NET/ROM
++ * on both convergence time and overhead.
++ *
++ * Strategy: be MORE aggressive than NET/ROM during convergence,
++ * then LESS aggressive once stable.
++ *
++ *  1. FAST-START: 15-second broadcast interval for the first 5 cycles
++ *     after startup, then switch to normal L3INTERVAL.
++ *  2. FLOOD-ON-NEW: when a genuinely NEW destination is discovered
++ *     (not just a quality update), schedule an immediate re-broadcast
++ *     after a short random delay (1-4 seconds). This fires at most
++ *     once per new destination (~9 times in a 10-node network).
++ *  3. ADAPTIVE BACKOFF: once the routing table has been stable for
++ *     3 consecutive cycles, double the interval (up to 4×). Any
++ *     change resets to base interval.
++ *  4. JITTER: ±25% on all periodic timers.
++ *  5. MEASURED QUALITY: EWMA of frame success rate adjusts route quality.
++ */
++
++#include <stdlib.h>
++
++static int  turboInited = 0;
++static int  turboCycleCount = 0;
++static int  turboStableCycles = 0;
++static int  turboAdaptiveMult = 1;
++static int  turboNewDestPending = 0;
++static int  turboNewDestTimer = 0;
++static int  turboLastNodeCount = 0;
++static int  turboFastTimer = 1;     /* counts down in L3FastTimer (1-sec ticks) */
++static int  turboFastDone = 0;      /* set after fast-start phase complete */
++static UCHAR turboMeasuredQual[64];
++
++#define TURBO_FAST_CYCLES     5    /* how many fast broadcasts on startup */
++#define TURBO_FAST_INTERVAL   15   /* seconds between fast broadcasts */
++#define TURBO_STABLE_THRESH   3    /* stable cycles before backoff */
++#define TURBO_MAX_MULT        4
++#define TURBO_JITTER_PCT      25
++#define TURBO_MQ_ALPHA        30   /* EWMA weight for new sample */
++#define TURBO_MQ_MIN_FRAMES   10
++
++static int turboRand(int max)
++{
++	if (max <= 0) return 0;
++	return rand() % (max + 1);
++}
++
++static int turboJitter(int base)
++{
++	int jit = (base * TURBO_JITTER_PCT) / 100;
++	if (jit < 1) return base;
++	return base - jit + turboRand(2 * jit);
++}
++
++static void turboInit(void)
++{
++	int i;
++	if (turboInited) return;
++	for (i = 0; i < 64; i++)
++		turboMeasuredQual[i] = 255;
++	turboInited = 1;
++	srand((unsigned int)time(NULL) ^ (unsigned int)getpid());
++}
++
++static int turboRouteIndex(struct ROUTE * ROUTE)
++{
++	int idx = (int)(ROUTE - NEIGHBOURS);
++	if (idx < 0 || idx >= 64) return -1;
++	return idx;
++}
++
++static int turboEffectiveQual(struct ROUTE * ROUTE)
++{
++	int idx = turboRouteIndex(ROUTE);
++	int total, successPct, newMQ, baseQual;
++
++	if (idx < 0) return ROUTE->NEIGHBOUR_QUAL;
++
++	total = ROUTE->NBOUR_IFRAMES + ROUTE->NBOUR_RETRIES;
++	if (total >= TURBO_MQ_MIN_FRAMES)
++	{
++		successPct = (ROUTE->NBOUR_IFRAMES * 255) / total;
++		newMQ = (TURBO_MQ_ALPHA * successPct + (100 - TURBO_MQ_ALPHA) * turboMeasuredQual[idx]) / 100;
++		if (newMQ > 255) newMQ = 255;
++		if (newMQ < 1) newMQ = 1;
++		turboMeasuredQual[idx] = (UCHAR)newMQ;
++	}
++
++	baseQual = ROUTE->NEIGHBOUR_QUAL;
++	return (baseQual * turboMeasuredQual[idx] + 128) / 256;
++}
++
++static void turboSignalNewDest(void)
++{
++	if (!turboNewDestPending)
++	{
++		turboNewDestPending = 1;
++		turboNewDestTimer = 1 + turboRand(3); /* 1-4 second delay */
++	}
++}
++
++#endif /* TURBO_ROUTING */
++
+ 
+ VOID L3BG()
+ {
+@@ -390,7 +494,12 @@
+ 	//	GET QUALITY
+ 
+ 	Qual = ROUTEQUAL = ROUTE->NEIGHBOUR_QUAL;		// FOR INITIAL ROUTE TABLE UPDATE
+-	
++
++#ifdef TURBO_ROUTING
++	turboInit();
++	Qual = ROUTEQUAL = turboEffectiveQual(ROUTE);
++#endif
++
+ 	//	CHECK LINK IS IN DEST LIST
+ 
+ 	if (FindDestination(Msg->ORIGIN, &DEST) == 0)
+@@ -407,6 +516,9 @@
+ 			DEST->RouteLastTT = (uint16_t *)zalloc(MAXNEIGHBOURS * sizeof(uint16_t));
+ 
+ 		NUMBEROFNODES++;
++#ifdef TURBO_ROUTING
++		turboSignalNewDest();
++#endif
+ 	}
+ 
+ 	//	ALWAYS UPDATE ALIAS IN CASE NOT PRESENT IN ORIGINAL TABLE 
+@@ -579,7 +691,7 @@
+ 		{
+ 			if (DEST == NULL)
+ 				continue;
+-		
++
+ 			//	CREATE DESTINATION RECORD
+ 
+ 			memset(DEST, 0, sizeof(struct DEST_LIST));
+@@ -588,10 +700,13 @@
+ 				DEST->RouteLastTT = (uint16_t *)zalloc(MAXNEIGHBOURS * sizeof(uint16_t));
+ 
+ 			NUMBEROFNODES++;
++#ifdef TURBO_ROUTING
++			turboSignalNewDest();
++#endif
+ 		}
+ 
+ 		ptr1 += 7;
+-	
++
+ 		//	UPDATE ALIAS#
+ 
+ 		memcpy(DEST->DEST_ALIAS, ptr1, 6);
+@@ -1091,6 +1206,44 @@
+ 
+ 	//	CHECK FOR NODES BROADCAST
+ 
++#ifdef TURBO_ROUTING
++	if (L3TIMER)
++	{
++		L3TIMER--;
++		if (L3TIMER == 0)
++		{
++			int prevNodeCount = turboLastNodeCount;
++			turboInit();
++			turboCycleCount++;
++			turboLastNodeCount = NUMBEROFNODES;
++
++			/* Detect stability: no new nodes learned this cycle */
++			if (NUMBEROFNODES == prevNodeCount && prevNodeCount > 0)
++				turboStableCycles++;
++			else
++				turboStableCycles = 0;
++
++			/* Compute next interval (fast-start is handled by L3FastTimer) */
++			if (turboStableCycles >= TURBO_STABLE_THRESH)
++			{
++				/* Stable: exponential backoff */
++				if (turboAdaptiveMult < TURBO_MAX_MULT)
++					turboAdaptiveMult *= 2;
++				L3TIMER = turboJitter(L3INTERVAL * turboAdaptiveMult);
++			}
++			else
++			{
++				/* Active convergence: base interval with jitter */
++				turboAdaptiveMult = 1;
++				L3TIMER = turboJitter(L3INTERVAL);
++			}
++			if (L3TIMER < 1) L3TIMER = 1;
++
++			UPDATEDESTLIST();
++			SENDNODESMSG(0);
++		}
++	}
++#else
+ 	if (L3TIMER)				// Not if Disabled
+ 	{
+ 		L3TIMER--;
+@@ -1098,12 +1251,13 @@
+ 		if (L3TIMER == 0)
+ 		{
+ 			//	UPDATE DEST LIST AND SEND 'NODES' MESSAGE
+-			
++
+ 			L3TIMER = L3INTERVAL;
+ 			UPDATEDESTLIST();
+ 			SENDNODESMSG(0);
+ 		}
+ 	}
++#endif
+ 
+ 	//	TIDY ROUTES
+ 
+@@ -1144,6 +1298,46 @@
+ 	if (CLOSING)
+ 		return;
+ 
++#ifdef TURBO_ROUTING
++	turboInit();
++
++	/* Fast-start: broadcast every TURBO_FAST_INTERVAL seconds for first N cycles */
++	if (!turboFastDone)
++	{
++		turboFastTimer--;
++		if (turboFastTimer <= 0)
++		{
++			turboCycleCount++;
++			if (turboCycleCount >= TURBO_FAST_CYCLES)
++				turboFastDone = 1;
++
++			turboFastTimer = TURBO_FAST_INTERVAL + turboRand(6) - 3;
++			if (turboFastTimer < 5) turboFastTimer = 5;
++
++			if (!NODESINPROGRESS)
++			{
++				UPDATEDESTLIST();
++				SENDNODESMSG(0);
++			}
++		}
++	}
++
++	/* Flood-on-new-dest: re-broadcast when we learn a new destination */
++	if (turboNewDestPending)
++	{
++		turboNewDestTimer--;
++		if (turboNewDestTimer <= 0)
++		{
++			turboNewDestPending = 0;
++			if (!NODESINPROGRESS)
++			{
++				UPDATEDESTLIST();
++				SENDNODESMSG(0);
++			}
++		}
++	}
++#endif
++
+ 	INP3TIMER();
+ 
+ 	// Send Node faster if VARA
