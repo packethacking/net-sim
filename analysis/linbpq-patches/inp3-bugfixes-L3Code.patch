@@ -1,0 +1,24 @@
+--- L3Code.c.orig	2026-05-25 09:16:12.981287596 +0000
++++ L3Code.c	2026-05-25 09:16:28.526259955 +0000
+@@ -1022,7 +1022,11 @@
+ 		if (DEST->DEST_ROUTE == 0)
+ 			continue;
+ 
+-		if (DEST->INP3ROUTE[DEST->DEST_ROUTE].ROUT_NEIGHBOUR == ROUTE)   // Is this the active route
++		if (DEST->DEST_ROUTE >= 1 && DEST->DEST_ROUTE <= 3
++			? DEST->NRROUTE[DEST->DEST_ROUTE - 1].ROUT_NEIGHBOUR == ROUTE
++			: (DEST->DEST_ROUTE >= 4 && DEST->DEST_ROUTE <= 6
++				? DEST->INP3ROUTE[DEST->DEST_ROUTE - 4].ROUT_NEIGHBOUR == ROUTE
++				: 0))   // Is this the active route
+ 		{
+ 			// Yes, so clear
+ 
+@@ -1457,7 +1461,7 @@
+ 
+ 				DEST->DEST_ROUTE++;			// TO NEXT
+ 				
+-				if (DEST->DEST_ROUTE = 7)
++				if (DEST->DEST_ROUTE == 7)
+ 					DEST->DEST_ROUTE = 1;	// TRY TO ACTIVATE FIRST
+ 			}
+ 		}

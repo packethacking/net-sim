@@ -1,0 +1,73 @@
+--- BPQINP3.c.orig	2026-05-25 09:16:12.983270250 +0000
++++ BPQINP3.c	2026-05-25 09:17:06.678262223 +0000
+@@ -356,9 +356,9 @@
+ 	Route->Timeout = 0;			// Got Response
+ 	
+ 	sscanf(&Buff->L4DATA[6], "%u", &OrigTime);
+-	RTT = GetTickCountINP3() - OrigTime;		// We work internally in mS
++	RTT = GetTickCountINP3() - OrigTime;		// 10mS units
+ 
+-	if (RTT > 60000 || RTT < 0)
++	if (RTT > 60000)
+ 		return;					// Ignore if more than 60 secs (why ??)
+ 
+ 	if (RTT == 0)
+@@ -373,7 +373,10 @@
+ 	else
+ 		Route->SRTT = ((Route->SRTT * 80)/100) + ((RTT * 20)/100);
+ 
+-	Route->RTTIncrement = Route->SRTT / 2;		// Half for one way time.
++	if (Route->NeighbourSRTT)
++		Route->RTTIncrement = (Route->SRTT + Route->NeighbourSRTT) / 2;
++	else
++		Route->RTTIncrement = Route->SRTT / 2;
+ 
+ 	if (Route->RTTIncrement == 0)
+ 		Route->RTTIncrement = 1;
+@@ -677,7 +680,7 @@
+ 	for (i = 0; i < 3; i++)
+ 	{
+ 		ROUTEPTR = &Dest->INP3ROUTE[i];
+-		
++
+ 		if (ROUTEPTR->ROUT_NEIGHBOUR == NULL)
+ 		{
+ 			// Add here
+@@ -689,7 +692,6 @@
+ 			SortRoutes(Dest);
+ 			return;
+ 		}
+-		ROUTEPTR++;
+ 	}
+ 
+ 	if (DEBUGINP3) Debugprintf("INP3 All entries in use - see if this is better than existing");
+@@ -1544,9 +1546,9 @@
+ 			sendHops = Entry->Hops + 1;
+ 
+ 			sendTT = Entry->STT + Entry->ROUT_NEIGHBOUR->RTTIncrement;
+-			Dest->RouteLastTT[Entry->ROUT_NEIGHBOUR->recNum] = sendTT;
++			Dest->RouteLastTT[Route->recNum] = sendTT;
+ 
+-			if ((Route->RemoteMAXHOPS == 0 || Route->RemoteMAXHOPS >= Entry->Hops || Entry->Hops > 30) && 
++			if ((Route->RemoteMAXHOPS == 0 || Route->RemoteMAXHOPS >= Entry->Hops || Entry->Hops > 30) &&
+ 				(Route->RemoteMAXRTT == 0 || Route->RemoteMAXRTT >= Entry->STT || Entry->STT == 60000))
+ 			{
+ 				Msg = Route->Msg;
+@@ -1797,15 +1799,14 @@
+ 			if (memcmp(Route->NEIGHBOUR_CALL, Dest->DEST_CALL, 7) == 0)
+ 			{
+ 				if (DEBUGINP3) Debugprintf("INP3 Timer RIF Don't send %s to itself", Call);
+-				Route++;
+ 				continue;
+ 			}
+ 
+ 			sendHops = Entry->Hops + 1;
+ 			sendTT = Entry->STT + Entry->ROUT_NEIGHBOUR->RTTIncrement;
+-			lastTT = Dest->RouteLastTT[Entry->ROUT_NEIGHBOUR->recNum];
++			lastTT = Dest->RouteLastTT[Route->recNum];
+ 
+-			Dest->RouteLastTT[Entry->ROUT_NEIGHBOUR->recNum] = sendTT;
++			Dest->RouteLastTT[Route->recNum] = sendTT;
+ 
+ 			// send, but only if within their constraints
+ 
