@@ -1,5 +1,8 @@
 # LinBPQ Bug Report: 7 Bugs in NET/ROM and INP3 Routing
 
+**LinBPQ version:** 6.0.25.28 (April 2026)  
+**Commit:** [`96f7e50`](https://github.com/m0lte/LinBPQ/commit/96f7e50b4005e32b80453ceac10d1e95c536d286) (2026-05-21, current HEAD of master)  
+
 This document describes 7 bugs found in LinBPQ's routing implementation during
 quantitative testing with [net-sim](https://github.com/packethacking/net-sim).
 Each bug includes the exact location, a description, a fix, and a test strategy.
