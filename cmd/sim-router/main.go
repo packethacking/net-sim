@@ -17,6 +17,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"strings"
 	"syscall"
 
 	"github.com/packethacking/net-sim/internal/config"
@@ -30,11 +31,22 @@ func main() {
 	direwolfPath := flag.String("direwolf", "", "path to direwolf (default: search $PATH)")
 	workDir := flag.String("workdir", "", "scratch dir for per-port config files / FIFOs (default: a unique subdir of $TMPDIR)")
 	recordDir := flag.String("record", "", "if set, record all per-port TX and RX audio to a timestamped subdirectory of this path")
+	composite := flag.String("composite", "", "comma-separated transmitter ports (e.g. a.vhf,b.vhf) to composite into one real-time, sample-aligned WAV (one TX per channel — stereo for two). Requires -record for the output dir")
 	flag.Parse()
 
 	if *cfgPath == "" {
 		fmt.Fprintln(os.Stderr, "sim-router: -config is required")
 		flag.Usage()
+		os.Exit(2)
+	}
+
+	if *composite != "" && *recordDir == "" {
+		fmt.Fprintln(os.Stderr, "sim-router: -composite requires -record DIR (for the output directory)")
+		os.Exit(2)
+	}
+	compositePorts, err := parseCompositePorts(*composite)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "sim-router:", err)
 		os.Exit(2)
 	}
 
@@ -89,6 +101,16 @@ func main() {
 		os.Exit(1)
 	}
 
+	if len(compositePorts) > 0 {
+		path, err := r.StartCompositeRecording(compositePorts)
+		if err != nil {
+			logger.Error("start composite recording", "err", err)
+			_ = r.Stop()
+			os.Exit(1)
+		}
+		logger.Info("composite recording", "file", path, "channels", *composite)
+	}
+
 	// Run until SIGINT/SIGTERM or a child dies (router cancels its own ctx).
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
@@ -141,6 +163,28 @@ func resolveDirewolf(explicit string) (string, error) {
 		}
 	}
 	return "", errors.New("direwolf not found in $PATH or common locations")
+}
+
+// parseCompositePorts turns a comma-separated "a.vhf,b.vhf" list into
+// PortRefs. Empty input yields no refs (composite disabled). Order is
+// preserved: the first port is channel 0 (left ear in the stereo case).
+func parseCompositePorts(s string) ([]config.PortRef, error) {
+	if strings.TrimSpace(s) == "" {
+		return nil, nil
+	}
+	var refs []config.PortRef
+	for _, part := range strings.Split(s, ",") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		dot := strings.IndexByte(part, '.')
+		if dot <= 0 || dot >= len(part)-1 {
+			return nil, fmt.Errorf("invalid -composite port %q (want <node>.<port>)", part)
+		}
+		refs = append(refs, config.PortRef{NodeID: part[:dot], PortID: part[dot+1:]})
+	}
+	return refs, nil
 }
 
 func resolveWorkDir(explicit string) (string, error) {

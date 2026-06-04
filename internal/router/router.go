@@ -122,6 +122,12 @@ type Router struct {
 	session  atomic.Pointer[recordSession]
 	recordMu sync.Mutex
 
+	// composite is the active composite (multi-channel TX timeline)
+	// recorder, or nil. Read on the txReader hot path, so atomic.
+	// compositeMu serialises Start/StopCompositeRecording and shutdown.
+	composite   atomic.Pointer[compositeRecorder]
+	compositeMu sync.Mutex
+
 	// txTrackers — one per port — record the wall-clock time of each
 	// port's last above-threshold TX block. The txWatchdog goroutine
 	// fires tx_end when a tracker hasn't been bumped within
@@ -340,6 +346,9 @@ func (r *Router) shutdown() error {
 	if s := r.session.Swap(nil); s != nil {
 		s.Close()
 	}
+	if cr := r.composite.Swap(nil); cr != nil {
+		cr.stop()
+	}
 	return nil
 }
 
@@ -461,6 +470,9 @@ func (r *Router) txReader(ctx context.Context, ref config.PortRef, c *tnc.Child)
 			}
 			if s := r.session.Load(); s != nil {
 				s.WriteTX(ref, blk)
+			}
+			if cr := r.composite.Load(); cr != nil {
+				cr.feed(ref, blk)
 			}
 			if r.opts.AudioTap != nil {
 				key := ref.String() + "|tx"

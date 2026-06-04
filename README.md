@@ -322,6 +322,65 @@ but its data-chunk size will say zero — most players will refuse to
 play it. Stop the router cleanly (or click Record off) before pulling
 the plug.
 
+### Composite recording — true on-air timeline
+
+The per-port `*.tx.wav` files above are written straight from each TNC
+as it *bursts* its TX audio (samoyed can emit a 500 ms frame onto its
+UDP socket in a few wall-clock ms), so they faithfully carry the
+modulated waveform but are **not** a real-time timeline — you can't line
+two of them up and trust the gaps.
+
+A **composite recording** fixes that. It captures a chosen set of
+transmitters into a *single*, sample-aligned, multi-channel WAV — one
+transmitter per channel — and paces every channel through one real-time
+clock (the same mechanism that feeds audio into the receivers). For the
+canonical two-station setup that's a **stereo** file with one station's
+transmitted audio in each ear. The result is an accurate timeline of
+what was on the air: overlapping transmissions overlap in time,
+inter-burst gaps are real silence, and both channels share one start
+time. Drop it into Audacity and you can see at a glance who was keying
+when — ideal for inspecting hidden-node collisions (put the two hidden
+stations in left/right).
+
+The audio is the clean transmitter output (full-scale, before any
+per-link path loss, noise, or the capture-effect mixer) — it's what each
+station actually put on the air, not what any particular receiver heard.
+
+**`sim-router`** — pass `-composite a.vhf,b.vhf` together with `-record DIR`
+(the base dir for the output). Recording starts as soon as the router
+comes up and stops on a clean shutdown:
+
+```
+sim-router -config configs/hidden-node.yaml -record /tmp/sim-rec \
+  -composite a.vhf,c.vhf
+# /tmp/sim-rec/composite-20260604T120000.000Z.wav  (stereo: a.vhf left, c.vhf right)
+```
+
+List more than two ports for a multi-track WAV (one channel each, in the
+order given).
+
+**`sim-web`** — with `-record DIR` set, a **Composite recording** panel
+appears on the control page: pick the Left-ear and Right-ear
+transmitters, click **Start recording**, then **Stop recording** when
+done, and **Download .wav**.
+
+#### HTTP API (for external software)
+
+Drive it from a test harness or any HTTP client. All endpoints live
+under `/api/record/composite/` and need `sim-web` started with
+`-record DIR` and the router running.
+
+| Method & path | Body | Effect |
+|---|---|---|
+| `POST /api/record/composite/start` | `{"ports":["a.vhf","c.vhf"]}` (optional) | Start a recording. Each port is one channel, in order (index 0 = left). Omit the body to default to the topology's first two ports. |
+| `POST /api/record/composite/stop` | — | Finalise the file (patches the WAV header) and return its status. |
+| `GET /api/record/composite/status` | — | Current state: `available`, `active`, `channels`, `path`, `duration_s`, and `download_url` once a file is complete. |
+| `GET /api/record/composite/download` | — | Stream the most recently completed composite WAV as an attachment. |
+
+A typical external run: `POST .../start` → exercise your stations over
+KISS → `POST .../stop` → `GET .../download`. The `composite` block is
+also included in `GET /api/status`.
+
 ## Why FM capture-effect mixing (and not linear sum)
 
 A linear-sum mixer is simpler and is what most "audio bus" libraries

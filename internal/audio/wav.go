@@ -30,7 +30,7 @@ func NewWAVWriter(path string) (*WAVWriter, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := writeWAVHeader(f, 0); err != nil {
+	if err := writeWAVHeader(f, 0, 1); err != nil {
 		_ = f.Close()
 		_ = os.Remove(path)
 		return nil, fmt.Errorf("write wav header: %w", err)
@@ -60,22 +60,116 @@ func (w *WAVWriter) Close() error {
 	// Best-effort header patch even if a previous Write errored: a partial
 	// file with the correct size in the header is still useful.
 	if _, err := w.f.Seek(0, io.SeekStart); err == nil {
-		_ = writeWAVHeader(w.f, w.written)
+		_ = writeWAVHeader(w.f, w.written, 1)
 	}
 	return w.f.Close()
 }
 
+// MultiWAVWriter streams interleaved N-channel 16-bit-LE PCM at
+// audio.SampleRate to a WAV file. It is the multi-track sibling of
+// WAVWriter — same crash-safety contract (header patched on Close) — used
+// by the composite recorder to write one transmitter per channel into a
+// single sample-aligned file.
+//
+// Callers hand Write fully-interleaved frames (sample 0 of every channel,
+// then sample 1 of every channel, …). Interleave builds those from a set
+// of per-channel mono blocks.
+type MultiWAVWriter struct {
+	f        *os.File
+	channels uint16
+	written  uint32 // bytes of PCM written so far (data chunk size)
+	closed   bool
+}
+
+// NewMultiWAVWriter creates path and writes an N-channel WAV header.
+// channels must be >= 1.
+func NewMultiWAVWriter(path string, channels int) (*MultiWAVWriter, error) {
+	if channels < 1 {
+		return nil, fmt.Errorf("wav: channels must be >= 1, got %d", channels)
+	}
+	f, err := os.Create(path)
+	if err != nil {
+		return nil, err
+	}
+	if err := writeWAVHeader(f, 0, uint16(channels)); err != nil {
+		_ = f.Close()
+		_ = os.Remove(path)
+		return nil, fmt.Errorf("write wav header: %w", err)
+	}
+	return &MultiWAVWriter{f: f, channels: uint16(channels)}, nil
+}
+
+// Write appends interleaved PCM bytes verbatim. The caller is responsible
+// for handing in correctly-formatted little-endian int16 frames matching
+// the channel count — Interleave produces exactly that.
+func (w *MultiWAVWriter) Write(b []byte) (int, error) {
+	if w.closed {
+		return 0, os.ErrClosed
+	}
+	n, err := w.f.Write(b)
+	w.written += uint32(n)
+	return n, err
+}
+
+// Close patches the two size fields and closes the file. Idempotent.
+func (w *MultiWAVWriter) Close() error {
+	if w.closed {
+		return nil
+	}
+	w.closed = true
+	if _, err := w.f.Seek(0, io.SeekStart); err == nil {
+		_ = writeWAVHeader(w.f, w.written, w.channels)
+	}
+	return w.f.Close()
+}
+
+// Interleave merges len(blocks) equal-length mono blocks into one
+// interleaved frame group: sample 0 of channel 0, sample 0 of channel 1,
+// …, sample 1 of channel 0, … Each input block is raw LE int16 mono PCM
+// (typically a BlockBytes-sized audio.Block). A nil or short block is
+// treated as silence so a channel with no audio this tick still advances
+// in lock-step with the others — that lock-step is what keeps every
+// channel sample-aligned to the same start time.
+func Interleave(blocks []Block) []byte {
+	n := len(blocks)
+	if n == 0 {
+		return nil
+	}
+	// Frame count is governed by the longest block; shorter/absent blocks
+	// pad with silence. In normal operation every block is BlockBytes.
+	maxBytes := 0
+	for _, b := range blocks {
+		if len(b) > maxBytes {
+			maxBytes = len(b)
+		}
+	}
+	samples := maxBytes / 2
+	out := make([]byte, samples*n*2)
+	for ch, b := range blocks {
+		for s := 0; s < samples; s++ {
+			lo, hi := byte(0), byte(0)
+			if i := s * 2; i+1 < len(b) {
+				lo, hi = b[i], b[i+1]
+			}
+			o := (s*n + ch) * 2
+			out[o] = lo
+			out[o+1] = hi
+		}
+	}
+	return out
+}
+
 // writeWAVHeader writes the canonical 44-byte RIFF/WAVE/fmt /data header
-// for mono 16-bit LE PCM at SampleRate. dataSize is the byte length of
-// the data chunk's PCM payload (0 at file creation; patched on Close).
-func writeWAVHeader(w io.Writer, dataSize uint32) error {
+// for numChannels-channel 16-bit LE PCM at SampleRate. dataSize is the
+// byte length of the data chunk's PCM payload (0 at file creation;
+// patched on Close).
+func writeWAVHeader(w io.Writer, dataSize uint32, numChannels uint16) error {
 	const (
-		numChannels   = 1
 		bitsPerSample = 16
-		byteRate      = SampleRate * numChannels * (bitsPerSample / 8)
-		blockAlign    = numChannels * (bitsPerSample / 8)
 		audioFormat   = 1 // PCM
 	)
+	byteRate := SampleRate * uint32(numChannels) * (bitsPerSample / 8)
+	blockAlign := numChannels * (bitsPerSample / 8)
 	hdr := make([]byte, 0, wavHeaderBytes)
 	hdr = append(hdr, []byte("RIFF")...)
 	hdr = binary.LittleEndian.AppendUint32(hdr, 36+dataSize)

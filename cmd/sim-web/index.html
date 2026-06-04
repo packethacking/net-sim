@@ -163,6 +163,22 @@ modem only.</p>
   <span id="rec-status" class="muted"></span>
 </div>
 
+<div id="composite" class="block" hidden style="max-width: 50rem;">
+  <div class="block-head">
+    <span class="title">Composite recording &nbsp;<small class="muted">true on-air timeline — one transmitter per channel</small></span>
+    <span id="comp-state" class="muted"></span>
+  </div>
+  <div class="row" style="margin:.25rem 0;">
+    <span class="field"><label for="comp-left">Left ear</label>
+      <select id="comp-left" onchange="compSel.left=this.value"></select></span>
+    <span class="field"><label for="comp-right">Right ear</label>
+      <select id="comp-right" onchange="compSel.right=this.value"></select></span>
+    <button id="comp-btn" class="primary" onclick="apiCompositeToggle()">Start recording</button>
+    <button id="comp-dl" onclick="apiCompositeDownload()" disabled>Download .wav</button>
+  </div>
+  <small class="muted" id="comp-hint"></small>
+</div>
+
 <div id="msg"></div>
 
 <div id="ports"></div>
@@ -197,6 +213,11 @@ const COLLISIONS   = ["silence", "sum", "noise"];
 
 let topology = null;     // the JSON view of /etc/sim/network.yaml
 let activeTab = "form";
+
+// Composite-recording UI state (persists across the 2s status poll so the
+// dropdown selection isn't clobbered while the user is choosing).
+let compSel = { left: null, right: null };
+let compActive = false;
 
 function setMsg(text, ok) {
   const m = $("msg");
@@ -262,6 +283,98 @@ async function apiRecordToggle() {
   await act(want ? "/api/record/start" : "/api/record/stop");
 }
 
+// ---- composite (true on-air timeline) recording -------------------------
+
+async function apiCompositeToggle() {
+  if (compActive) {
+    await act("/api/record/composite/stop");
+  } else {
+    const ports = [compSel.left, compSel.right].filter(Boolean);
+    if (ports.length < 1) { setMsg("choose at least one transmitter", false); return; }
+    await actJSON("/api/record/composite/start", { ports });
+  }
+  refreshStatus();
+}
+
+function apiCompositeDownload() { window.location = "/api/record/composite/download"; }
+
+async function actJSON(path, body) {
+  try {
+    const r = await fetch(path, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (!r.ok) throw new Error(await r.text());
+    setMsg(path + " ok", true);
+  } catch (e) {
+    setMsg(path + ": " + e.message, false);
+  }
+}
+
+// renderComposite reflects the composite-recorder status into the panel.
+// Only shown when sim-web was started with -record DIR.
+function renderComposite(s) {
+  const c = s.composite || {};
+  const panel = $("composite");
+  if (!c.available) { panel.hidden = true; return; }
+  panel.hidden = false;
+
+  const ports   = (s.ports || []).map(p => p.node + "." + p.port);
+  const running = !!s.running;
+  compActive    = !!c.active;
+
+  const leftSel = $("comp-left"), rightSel = $("comp-right");
+  if (compSel.left  === null && ports.length) compSel.left  = ports[0];
+  if (compSel.right === null && ports.length) compSel.right = ports[Math.min(1, ports.length - 1)];
+  fillSel(leftSel,  ports, compSel.left);
+  fillSel(rightSel, ports, compSel.right);
+  compSel.left  = leftSel.value  || null;
+  compSel.right = rightSel.value || null;
+
+  const canPick = running && !compActive;
+  leftSel.disabled = !canPick;
+  rightSel.disabled = !canPick;
+
+  const btn = $("comp-btn"), dl = $("comp-dl"), state = $("comp-state"), hint = $("comp-hint");
+
+  if (compActive) {
+    btn.textContent = "Stop recording";
+    btn.className = "danger";
+    btn.disabled = false;
+    const dur = (c.duration_s || 0).toFixed(1);
+    const chans = (c.channels && c.channels.length) ? "  [" + c.channels.join(" | ") + "]" : "";
+    state.textContent = "● REC " + dur + "s" + chans;
+    state.style.color = "#ffb3b3";
+    hint.textContent = c.path ? ("writing " + c.path.split("/").pop()) : "";
+  } else {
+    btn.textContent = "Start recording";
+    btn.className = "primary";
+    btn.disabled = !running;
+    state.textContent = "";
+    state.style.color = "";
+    hint.textContent = running
+      ? "Captures each chosen transmitter into one channel of a single, sample-aligned WAV paced in real time — overlapping transmissions overlap in time, gaps are real silence. Two stations → stereo, one per ear. Load it in Audacity to see who was on the air when."
+      : "Start the simulator, then choose two transmitters.";
+  }
+  dl.disabled = !c.download_url;
+}
+
+// fillSel (re)builds a port <select> only when the option set changed, so
+// the 2s status poll doesn't collapse an open dropdown or lose selection.
+function fillSel(sel, ports, want) {
+  const cur = Array.from(sel.options).map(o => o.value).join("\n");
+  if (cur !== ports.join("\n")) {
+    sel.innerHTML = "";
+    for (const p of ports) {
+      const o = document.createElement("option");
+      o.value = p; o.textContent = p;
+      sel.appendChild(o);
+    }
+  }
+  if (want != null && Array.from(sel.options).some(o => o.value === want)) sel.value = want;
+}
+
 async function act(path) {
   try {
     const r = await fetch(path, { method: "POST" });
@@ -314,6 +427,8 @@ async function refreshStatus() {
       recLabel.hidden = true;
       recStatus.textContent = "";
     }
+
+    renderComposite(s);
 
     if (s.last_error) setMsg(s.last_error, false);
   } catch {/* ignore: status polls every 2s, transient errors are fine */}
