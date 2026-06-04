@@ -1523,9 +1523,11 @@ window.addEventListener('resize', () => { renderStatic(); });
 // ============================================================
 //
 // Click a port's ♪ icon → open WebSocket to /api/audio?port=&side=,
-// receive raw int16 LE 44.1 kHz mono blocks, feed a single AudioWorklet
-// node that drains them into the AudioContext at sample rate. Only
-// one port at a time — clicking another switches over.
+// receive raw int16 LE 44.1 kHz mono blocks, feed a single playback
+// node that drains them into the AudioContext at sample rate. Secure
+// contexts (HTTPS / localhost) use an AudioWorklet; plain HTTP falls
+// back to a ScriptProcessorNode (see ensureAudioCtx). Only one port at
+// a time — clicking another switches over.
 
 // Worklet code inlined and shipped as a Blob URL so we don't need a
 // second served file. It just queues incoming Float32 samples and
@@ -1557,7 +1559,8 @@ registerProcessor('pcm-source', PCMSource);
 
 const listenState = {
   ctx: null,          // AudioContext (lazy, needs a user gesture)
-  node: null,         // AudioWorkletNode
+  node: null,         // AudioWorkletNode (secure ctx) or ScriptProcessorNode (fallback)
+  feed: null,         // (Float32Array) => void — push samples to the active node
   ws: null,           // WebSocket
   currentKey: null,   // "<port>|<side>"
   port: null,
@@ -1571,12 +1574,47 @@ async function ensureAudioCtx() {
   const ctx = new (window.AudioContext || window.webkitAudioContext)({
     sampleRate: 44100,
   });
-  const blob = new Blob([PCM_WORKLET], { type: 'application/javascript' });
-  await ctx.audioWorklet.addModule(URL.createObjectURL(blob));
-  const node = new AudioWorkletNode(ctx, 'pcm-source');
-  node.connect(ctx.destination);
+
+  if (ctx.audioWorklet) {
+    // Preferred path. AudioWorklet runs the queue/drain off the main
+    // thread, but it is a *secure-context* API — present only over
+    // HTTPS or on localhost.
+    const blob = new Blob([PCM_WORKLET], { type: 'application/javascript' });
+    await ctx.audioWorklet.addModule(URL.createObjectURL(blob));
+    const node = new AudioWorkletNode(ctx, 'pcm-source');
+    node.connect(ctx.destination);
+    listenState.node = node;
+    listenState.feed = (f32) => node.port.postMessage(f32, [f32.buffer]);
+  } else {
+    // Fallback for insecure contexts (plain HTTP on a non-localhost
+    // host), where ctx.audioWorklet is undefined. ScriptProcessorNode
+    // is deprecated and runs on the main thread, but it isn't
+    // secure-context-gated and is perfectly fine for monitoring one
+    // port's audio. Same queue/drain logic as PCM_WORKLET, in JS.
+    const node = ctx.createScriptProcessor(2048, 0, 1);
+    let q = new Float32Array(0);
+    node.onaudioprocess = (e) => {
+      const out = e.outputBuffer.getChannelData(0);
+      const n = Math.min(q.length, out.length);
+      for (let i = 0; i < n; i++) out[i] = q[i];
+      for (let i = n; i < out.length; i++) out[i] = 0;
+      q = q.subarray(n);
+    };
+    node.connect(ctx.destination);
+    listenState.node = node;
+    listenState.feed = (f32) => {
+      // Cap the backlog (~2 s) so a backgrounded tab whose audio clock
+      // has paused can't grow this array without bound.
+      const MAX = 44100 * 2;
+      if (q.length > MAX) q = q.subarray(q.length - MAX);
+      const merged = new Float32Array(q.length + f32.length);
+      merged.set(q);
+      merged.set(f32, q.length);
+      q = merged;
+    };
+  }
+
   listenState.ctx = ctx;
-  listenState.node = node;
   return ctx;
 }
 
@@ -1632,7 +1670,7 @@ async function toggleListen(port, side) {
     const i16 = new Int16Array(e.data);
     const f32 = new Float32Array(i16.length);
     for (let i = 0; i < i16.length; i++) f32[i] = i16[i] / 32768;
-    listenState.node.port.postMessage(f32, [f32.buffer]);
+    listenState.feed(f32);
   };
   ws.onerror = () => {
     $('listen-status').textContent = 'LINK ERR';
