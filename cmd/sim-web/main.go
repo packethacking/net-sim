@@ -17,6 +17,7 @@ import (
 	"encoding/json"
 	"errors"
 	"flag"
+	"fmt"
 	"html/template"
 	"io"
 	"log/slog"
@@ -25,6 +26,8 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"path/filepath"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -68,7 +71,7 @@ func main() {
 	direwolf := flag.String("direwolf", "", "direwolf binary (default: discover)")
 	workDir := flag.String("workdir", "", "scratch dir for per-port config files / FIFOs (default: temp)")
 	autostart := flag.Bool("autostart", false, "start the router immediately on launch")
-	recordDir := flag.String("record", "", "if set, enables the Record toggle in the UI; recordings land in timestamped subdirectories of this path")
+	recordDir := flag.String("record", "", "if set, enables the Record toggle and Composite recording panel in the UI; recordings land under this path")
 	flag.Parse()
 
 	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
@@ -135,6 +138,10 @@ func main() {
 	mux.HandleFunc("/api/record/start", app.handleRecordStart)
 	mux.HandleFunc("/api/record/stop", app.handleRecordStop)
 	mux.HandleFunc("/api/record/status", app.handleRecordStatus)
+	mux.HandleFunc("/api/record/composite/start", app.handleCompositeStart)
+	mux.HandleFunc("/api/record/composite/stop", app.handleCompositeStop)
+	mux.HandleFunc("/api/record/composite/status", app.handleCompositeStatus)
+	mux.HandleFunc("/api/record/composite/download", app.handleCompositeDownload)
 
 	srv := &http.Server{
 		Addr:              *addr,
@@ -191,6 +198,12 @@ type app struct {
 	// recording on and then clicked Apply&Restart gets a fresh session
 	// in the new run rather than having to re-toggle.
 	recordEnabled bool
+
+	// lastComposite is the path of the most recently *completed* composite
+	// recording (set when StopCompositeRecording returns). The download
+	// endpoint serves this file; the in-progress file isn't downloadable
+	// until stopped (its WAV header isn't patched yet).
+	lastComposite string
 }
 
 type pageData struct {
@@ -240,10 +253,10 @@ func (a *app) handleObserved(w http.ResponseWriter, _ *http.Request) {
 // handleStats is a cheap polling endpoint for the live-map HUD.
 //
 // Returns:
-//   * sim_cpu_pct  — aggregate CPU% across all containers attached to
+//   - sim_cpu_pct  — aggregate CPU% across all containers attached to
 //     any of this container's Docker networks (sum, scaled by online
 //     CPUs). NaN unless /var/run/docker.sock is mounted in.
-//   * host_cpu_pct — host-wide CPU% from /proc/stat. NaN on non-Linux.
+//   - host_cpu_pct — host-wide CPU% from /proc/stat. NaN on non-Linux.
 //
 // The visualiser prefers sim_cpu_pct and falls back to host if the
 // daemon socket isn't reachable.
@@ -477,14 +490,30 @@ type statusResponse struct {
 	LastError string           `json:"last_error,omitempty"`
 	LastEvent string           `json:"last_event,omitempty"`
 	Record    recordStatus     `json:"record"`
+	Composite compositeStatus  `json:"composite"`
+}
+
+// compositeStatus is the JSON view of the composite (multi-channel TX
+// timeline) recorder. "channels" is the ordered port list — index 0 is the
+// left ear in the stereo case. It is also returned standalone from
+// /api/record/composite/{start,stop,status}.
+type compositeStatus struct {
+	Available   bool     `json:"available"`              // -record DIR was set
+	Active      bool     `json:"active"`                 // a recording is in progress
+	Channels    []string `json:"channels,omitempty"`     // ordered port refs, one per WAV channel
+	Path        string   `json:"path,omitempty"`         // file currently being written
+	DurationS   float64  `json:"duration_s,omitempty"`   // seconds captured so far
+	Error       string   `json:"error,omitempty"`        // write error, if the stream faulted
+	LastPath    string   `json:"last_path,omitempty"`    // most recent completed file
+	DownloadURL string   `json:"download_url,omitempty"` // present when a completed file exists
 }
 
 type recordStatus struct {
-	Available bool   `json:"available"`         // -record DIR was set on the CLI
-	Enabled   bool   `json:"enabled"`           // user has toggled recording on
-	Active    bool   `json:"active"`            // a session is currently capturing
-	Base      string `json:"base,omitempty"`    // configured base dir
-	Dir       string `json:"dir,omitempty"`     // current session dir, when active
+	Available bool   `json:"available"`      // -record DIR was set on the CLI
+	Enabled   bool   `json:"enabled"`        // user has toggled recording on
+	Active    bool   `json:"active"`         // a session is currently capturing
+	Base      string `json:"base,omitempty"` // configured base dir
+	Dir       string `json:"dir,omitempty"`  // current session dir, when active
 }
 
 type portStatusItem struct {
@@ -532,8 +561,31 @@ func (a *app) writeStatus(w http.ResponseWriter) {
 		resp.Record.Dir = a.router.RecordingDir()
 	}
 
+	resp.Composite = a.compositeStatusLocked()
+
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(resp)
+}
+
+// compositeStatusLocked builds the composite-recorder status. The caller
+// must hold a.mu.
+func (a *app) compositeStatusLocked() compositeStatus {
+	cs := compositeStatus{Available: a.recordBase != ""}
+	if a.router != nil {
+		rs := a.router.CompositeStatus()
+		cs.Active = rs.Active
+		cs.Path = rs.Path
+		cs.Error = rs.Err
+		cs.DurationS = rs.Duration.Seconds()
+		for _, ref := range rs.Channels {
+			cs.Channels = append(cs.Channels, ref.String())
+		}
+	}
+	if a.lastComposite != "" {
+		cs.LastPath = a.lastComposite
+		cs.DownloadURL = "/api/record/composite/download"
+	}
+	return cs
 }
 
 func (a *app) handleRecordStart(w http.ResponseWriter, r *http.Request) {
@@ -579,6 +631,129 @@ func (a *app) handleRecordStop(w http.ResponseWriter, r *http.Request) {
 
 func (a *app) handleRecordStatus(w http.ResponseWriter, _ *http.Request) {
 	a.writeStatus(w)
+}
+
+// compositeStartReq is the optional JSON body for /api/record/composite/start.
+// ports is an ordered list of "<node>.<port>" refs — one WAV channel each,
+// index 0 = left ear. Omit it (or send an empty body) to default to the
+// topology's first two ports, i.e. a stereo "one station per ear" file.
+type compositeStartReq struct {
+	Ports []string `json:"ports"`
+}
+
+// handleCompositeStart begins a composite (multi-channel TX timeline)
+// recording. POST, optional JSON body (see compositeStartReq).
+func (a *app) handleCompositeStart(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method", http.StatusMethodNotAllowed)
+		return
+	}
+	var req compositeStartReq
+	if body, err := io.ReadAll(io.LimitReader(r.Body, 1<<16)); err == nil && len(body) > 0 {
+		if err := json.Unmarshal(body, &req); err != nil {
+			http.Error(w, "invalid json: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+	}
+	refs, err := parsePortRefs(req.Ports)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	a.mu.Lock()
+	if a.recordBase == "" {
+		a.mu.Unlock()
+		http.Error(w, "recording disabled: sim-web was started without -record DIR", http.StatusBadRequest)
+		return
+	}
+	rt := a.router
+	a.mu.Unlock()
+	if rt == nil {
+		http.Error(w, "router not running: Start the simulator first", http.StatusBadRequest)
+		return
+	}
+	if _, err := rt.StartCompositeRecording(refs); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	a.writeCompositeStatus(w)
+}
+
+// handleCompositeStop finalises the current composite recording and reports
+// the resulting file (now downloadable). POST.
+func (a *app) handleCompositeStop(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method", http.StatusMethodNotAllowed)
+		return
+	}
+	a.mu.Lock()
+	rt := a.router
+	a.mu.Unlock()
+	if rt != nil {
+		res, err := rt.StopCompositeRecording()
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if res.Path != "" {
+			a.mu.Lock()
+			a.lastComposite = res.Path
+			a.mu.Unlock()
+		}
+	}
+	a.writeCompositeStatus(w)
+}
+
+func (a *app) handleCompositeStatus(w http.ResponseWriter, _ *http.Request) {
+	a.writeCompositeStatus(w)
+}
+
+func (a *app) writeCompositeStatus(w http.ResponseWriter) {
+	a.mu.Lock()
+	cs := a.compositeStatusLocked()
+	a.mu.Unlock()
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
+	_ = json.NewEncoder(w).Encode(cs)
+}
+
+// handleCompositeDownload serves the most recently completed composite WAV
+// as a file attachment. The in-progress file isn't offered because its WAV
+// header isn't patched until the recording is stopped.
+func (a *app) handleCompositeDownload(w http.ResponseWriter, r *http.Request) {
+	a.mu.Lock()
+	path := a.lastComposite
+	a.mu.Unlock()
+	if path == "" {
+		http.Error(w, "no completed composite recording yet — start one, transmit, then stop it", http.StatusNotFound)
+		return
+	}
+	if _, err := os.Stat(path); err != nil {
+		http.Error(w, "composite file missing: "+err.Error(), http.StatusNotFound)
+		return
+	}
+	w.Header().Set("Content-Type", "audio/wav")
+	w.Header().Set("Content-Disposition", `attachment; filename="`+filepath.Base(path)+`"`)
+	http.ServeFile(w, r, path)
+}
+
+// parsePortRefs turns "<node>.<port>" strings into PortRefs. An empty list
+// is allowed (the router defaults it to the first two ports).
+func parsePortRefs(ss []string) ([]config.PortRef, error) {
+	var refs []config.PortRef
+	for _, s := range ss {
+		s = strings.TrimSpace(s)
+		if s == "" {
+			continue
+		}
+		dot := strings.IndexByte(s, '.')
+		if dot <= 0 || dot >= len(s)-1 {
+			return nil, fmt.Errorf("invalid port ref %q (want <node>.<port>)", s)
+		}
+		refs = append(refs, config.PortRef{NodeID: s[:dot], PortID: s[dot+1:]})
+	}
+	return refs, nil
 }
 
 func (a *app) start() error {
@@ -690,4 +865,3 @@ func resolveDirewolf(explicit string) (string, error) {
 	}
 	return "", errors.New("direwolf not found in $PATH or common locations")
 }
-
