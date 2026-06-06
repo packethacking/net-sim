@@ -146,57 +146,70 @@ type txTracker struct {
 	lastBusyNanos atomic.Int64
 }
 
-// linkQueue is one source→destination link's audio buffer. The capacity
-// is sized for ~3 s of audio at SampleRate / BlockSamples blocks per
-// second — large enough to absorb a full samoyed TX burst (preamble +
-// frame + postamble for typical AX.25) without dropping.
+// maxQueueBlocks is a safety cap on a single link's audio backlog (~60 s).
+// The channel is modelled as a CONTINUOUS CARRIER: blocks are never dropped
+// within a transmission (see linkQueue.push). 60 s only triggers on a genuine
+// runaway (a wedged rxFeeder), where dropping the head is the lesser evil — a
+// real keyup is at most a few seconds.
+const maxQueueBlocks = 60 * audio.SampleRate / audio.BlockSamples
+
+// linkQueue is one source→destination link's audio buffer: a non-dropping FIFO
+// of PCM blocks the source has transmitted, drained by the destination's
+// rxFeeder at the channel sample rate (so the receiver hears the carrier in
+// real time).
+//
+// A TNC bursts a whole keyup's worth of audio with no real-time pacing on its
+// end (see txReader), so the buffer must hold an entire transmission and the
+// rxFeeder plays it out at real time. It is non-dropping and grows as needed:
+// dropping mid-transmission would gap the receiver's audio, collapse its DCD /
+// carrier sense, and make the far end key up on top of an in-progress
+// transmission — a collision that cannot happen on a real continuous-carrier
+// channel. Memory is bounded in practice (a keyup is finite; the backing array
+// is released once drained); only a pathological runaway past maxQueueBlocks
+// ever drops.
 type linkQueue struct {
 	src, dst config.PortRef
 	loss     float64
 	noise    float64
-	ch       chan audio.Block
+
+	mu  sync.Mutex
+	buf []audio.Block // FIFO; index 0 = oldest
 }
 
 func newLinkQueue(src, dst config.PortRef, loss, noise float64) *linkQueue {
-	const capBlocks = 3 * audio.SampleRate / audio.BlockSamples
-	return &linkQueue{
-		src:   src,
-		dst:   dst,
-		loss:  loss,
-		noise: noise,
-		ch:    make(chan audio.Block, capBlocks),
-	}
+	return &linkQueue{src: src, dst: dst, loss: loss, noise: noise}
 }
 
-// pushNonBlocking enqueues a block; drops oldest if full. Logs the drop.
-func (q *linkQueue) pushNonBlocking(blk audio.Block, logger *slog.Logger) {
-	select {
-	case q.ch <- blk:
-		return
-	default:
+// push appends a block to the link's buffer. It never blocks and — modelling a
+// continuous carrier — never drops within a transmission, no matter how far the
+// source TNC has run ahead of real time. The only drop is the maxQueueBlocks
+// safety valve, which signals a stalled rxFeeder rather than normal operation,
+// so it is logged.
+func (q *linkQueue) push(blk audio.Block, logger *slog.Logger) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	if len(q.buf) >= maxQueueBlocks {
+		q.buf[0] = nil
+		q.buf = q.buf[1:]
+		logger.Warn("audio queue safety cap reached (rxFeeder stalled?)", "from", q.src, "to", q.dst)
 	}
-	// Full: drop the oldest block to make room. This indicates the
-	// downstream rxFeeder is falling behind — usually a sign something
-	// has stalled rather than a normal-operations event, so log it.
-	select {
-	case <-q.ch:
-	default:
-	}
-	select {
-	case q.ch <- blk:
-	default:
-	}
-	logger.Warn("audio queue overflow", "from", q.src, "to", q.dst)
+	q.buf = append(q.buf, blk)
 }
 
-// pop returns one block if immediately available.
+// pop returns one block if immediately available (FIFO, oldest first).
 func (q *linkQueue) pop() (audio.Block, bool) {
-	select {
-	case b := <-q.ch:
-		return b, true
-	default:
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	if len(q.buf) == 0 {
 		return nil, false
 	}
+	blk := q.buf[0]
+	q.buf[0] = nil // release the reference
+	q.buf = q.buf[1:]
+	if len(q.buf) == 0 {
+		q.buf = nil // release the backing array once drained
+	}
+	return blk, true
 }
 
 // Start spawns all samoyed children and begins routing audio.
@@ -481,7 +494,7 @@ func (r *Router) txReader(ctx context.Context, ref config.PortRef, c *tnc.Child)
 				}
 			}
 			for _, q := range outgoing {
-				q.pushNonBlocking(blk, r.logger)
+				q.push(blk, r.logger)
 			}
 		}
 	}
