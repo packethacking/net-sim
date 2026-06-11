@@ -116,7 +116,8 @@ Override knobs (set as env vars before `sudo bash`):
 | `NETWORK_YAML` | `/etc/sim/network.yaml` | the active config |
 | `WEB_PORT` | `8080` | sim-web listen port |
 | `SYSTEMD` | `1` | set to `0` to skip the unit |
-| `SIM_REF` / `SAMOYED_REF` | `main` | git ref to check out |
+| `SIM_REF` | `main` | net-sim git ref to check out |
+| `SAMOYED_REPO` / `SAMOYED_REF` | `M0LTE/samoyed` @ ACKMODE commit | samoyed source — temporarily pinned to the ACKMODE fork (see "Known limitations"); revert to `doismellburning/samoyed` `main` once ACKMODE lands upstream |
 
 The script is idempotent — re-run it to update to a newer `main`. It
 does **not** install pulseaudio / pipewire / jackd; samoyed initialises
@@ -411,8 +412,8 @@ qualitatively different things from the same code.
 
 ## Known limitations (samoyed-side, expected to be fixed upstream)
 
-These are gaps in the current samoyed build that affect what you can
-test against; both will likely land in samoyed soon and we'll bump the
+This is a gap in the current samoyed build that affects what you can
+test against; it will likely land in samoyed soon and we'll bump the
 pin then. Tracker issues:
 [net-sim#1](https://github.com/packethacking/net-sim/issues/1) /
 [net-sim#2](https://github.com/packethacking/net-sim/issues/2).
@@ -425,12 +426,18 @@ pin then. Tracker issues:
   the wire, this rig won't reproduce it yet. (The field used to be
   called `crc`, which was misleading — renamed to `fec` to match what
   it actually does.)
-- **No KISS ACKMODE.** Samoyed's KISS layer explicitly refuses XKISS
-  opcodes (`12 = ACKMODE data`, `14 = poll`) — sending one logs
-  `Using ACKMODE will cause this error.` and the frame is dropped.
-  Anything that depends on tracked-frame ACKs from the TNC (some BPQ
-  configurations, certain `ax25d` setups) won't work against simulated
-  ports. Use NORMAL KISS only.
+**KISS ACKMODE — now supported.** Previously samoyed's KISS layer refused
+the XKISS ACKMODE opcode and dropped the frame; the pinned samoyed build now
+implements G8BPQ extended-KISS ACKMODE (command nibble `0x0C`). Send a data
+frame with two leading id bytes (`C0 xC aa bb <frame> C0`) and the TNC echoes
+those two bytes back (`C0 xC aa bb C0`) once the frame has actually been
+transmitted — so a host (some BPQ configurations, certain `ax25d` setups) can
+start FRACK from the real on-air moment instead of from hand-off. The id bytes
+are echoed verbatim. (The implementation currently lives on a samoyed fork,
+[M0LTE/samoyed](https://github.com/M0LTE/samoyed/tree/feat/ackmode); net-sim
+pins that build and will switch back to upstream samoyed once ACKMODE lands
+there. XKISS poll mode and checksum mode remain unimplemented.) An end-to-end
+round-trip test lives in `internal/tnc/ackmode_test.go`.
 
 ## What's not in v1
 

@@ -45,30 +45,17 @@ jobs:
             type=semver,pattern={{major}}
             type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
 
-      # Resolve samoyed's current main HEAD SHA so it can be passed
-      # as a build-arg. Without this, the Dockerfile's
-      #   RUN git clone --depth 1 --branch main https://...samoyed.git
-      # is a layer whose command text never changes — GHA cache hits it
-      # every build and the bundled samoyed snapshot gets frozen at
-      # whatever it was the first time the layer ran. Pinning to a SHA
-      # in the build-args changes the layer's cache key whenever
-      # samoyed/main moves, so we pick up bugfixes in lockstep.
-      - name: Resolve samoyed main SHA
-        id: samoyed
-        run: |
-          sha=$(curl -fsSL \
-            -H "Accept: application/vnd.github.v3.sha" \
-            -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
-            https://api.github.com/repos/doismellburning/samoyed/commits/main)
-          echo "sha=$sha" >> "$GITHUB_OUTPUT"
-          echo "samoyed main = $sha"
-
+      # samoyed source (SAMOYED_REPO + SAMOYED_REF) is pinned to a fixed commit
+      # in the Dockerfile, so we no longer resolve a floating main HEAD here.
+      # A fixed SHA gives a stable layer cache key and reproducible release
+      # images. The pin is currently the ACKMODE fork branch
+      # (M0LTE/samoyed @ 6b4f5c7) pending doismellburning/samoyed#528 — see the
+      # Dockerfile comment for the revert-to-upstream instructions. To rebuild
+      # against a different samoyed, override the build-args there or here.
       - name: Build and push
         uses: docker/build-push-action@v7
         with:
           context: .
-          build-args: |
-            SAMOYED_REF=${{ steps.samoyed.outputs.sha }}
           # PR builds verify the Dockerfile still works but don't publish.
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
