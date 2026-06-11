@@ -18,8 +18,12 @@ SIM_REPO="${SIM_REPO:-https://github.com/packethacking/net-sim.git}"
 SIM_REF="${SIM_REF:-main}"
 SIM_DIR="${SIM_DIR:-/opt/sim}"
 
-SAMOYED_REPO="${SAMOYED_REPO:-https://github.com/doismellburning/samoyed.git}"
-SAMOYED_REF="${SAMOYED_REF:-main}"
+# TEMPORARY PIN: KISS ACKMODE isn't in doismellburning/samoyed yet; it's on the
+# fork branch below (M0LTE/samoyed feat/ackmode). When ACKMODE lands upstream,
+# set SAMOYED_REPO back to https://github.com/doismellburning/samoyed.git and
+# SAMOYED_REF to `main`.
+SAMOYED_REPO="${SAMOYED_REPO:-https://github.com/M0LTE/samoyed.git}"
+SAMOYED_REF="${SAMOYED_REF:-6b4f5c7aef633041cb2e55ab063f29ff0bacbefa}"
 SAMOYED_DIR="${SAMOYED_DIR:-/opt/samoyed}"
 
 WEB_PORT="${WEB_PORT:-8080}"

@@ -27,7 +27,17 @@
 # with samoyed's minimum.
 FROM golang:1.25-bookworm AS builder
 
-ARG SAMOYED_REF=main
+# samoyed source, pinned via build args. Both default here so every build
+# path (local `docker build`, install.sh, CI) gets the same samoyed.
+#
+# TEMPORARY PIN: KISS ACKMODE is not yet in doismellburning/samoyed; it lives
+# on the fork branch below (M0LTE/samoyed feat/ackmode). When ACKMODE lands in
+# doismellburning/samoyed, revert SAMOYED_REPO to
+# https://github.com/doismellburning/samoyed.git and set SAMOYED_REF back to
+# `main` (or that commit). Pinned to a fixed SHA so release images are
+# reproducible rather than tracking a floating branch.
+ARG SAMOYED_REPO=https://github.com/M0LTE/samoyed.git
+ARG SAMOYED_REF=6b4f5c7aef633041cb2e55ab063f29ff0bacbefa
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
         git make pkg-config gcc libc6-dev \
@@ -35,14 +45,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         libavahi-client-dev libbsd-dev libgps-dev libasound2-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# samoyed (pinned via SAMOYED_REF build arg). Accepts either a branch
-# name OR a commit SHA: we always init+fetch a single commit, so SHAs
-# work without `git clone --branch` (which rejects them).
-#
-# CI passes the current samoyed/main HEAD SHA so this RUN's cache key
-# moves whenever samoyed/main moves — see .github/workflows/docker.yml.
+# Accepts either a branch name OR a commit SHA in SAMOYED_REF: we always
+# init+fetch a single commit, so SHAs work without `git clone --branch`
+# (which rejects them). A pinned SHA keeps this layer's cache key stable, so
+# rebuilding a given net-sim tag reproduces the same samoyed snapshot.
 RUN git init --quiet /src/samoyed \
-    && git -C /src/samoyed remote add origin https://github.com/doismellburning/samoyed.git \
+    && git -C /src/samoyed remote add origin "${SAMOYED_REPO}" \
     && git -C /src/samoyed fetch --depth 1 origin "${SAMOYED_REF}" \
     && git -C /src/samoyed checkout --quiet FETCH_HEAD \
     && make -C /src/samoyed cmds
