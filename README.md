@@ -268,6 +268,15 @@ when you meant `baud`) is an error at startup, not a silent default.
 
 ### time_scale — faster-than-real-time simulation
 
+> **TNC pacing does not scale (measured):** samoyed paces its transmissions in
+> wall-clock time (the real-airtime sleep before PTT release), so at
+> `time_scale > 1` the TNC transmits in real time while the channel runs N×
+> faster — TX throughput stays wall-clock-bound and ACKMODE echoes arrive N×
+> "late" relative to a host whose protocol timers are scaled to match. In
+> practice `time_scale` is currently only sound for receive-path/mixer
+> experiments; ACKMODE pacing or throughput measurements need `time_scale: 1`
+> until the TNC grows a matching speed factor (tracked upstream).
+
 `time_scale: N` (or the `-time-scale N` flag on `sim-router`, which
 overrides the config) runs the whole simulation N× faster than wall
 clock: the router divides every pacing interval by N — the 10 ms
