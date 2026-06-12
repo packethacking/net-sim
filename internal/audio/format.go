@@ -64,6 +64,23 @@ func (b Block) IsSilence() bool {
 	return true
 }
 
+// RMS returns the root-mean-square sample amplitude of the block
+// (0..32768). Used by the collision "noise" model to size the garble to
+// the colliding signals' level.
+func (b Block) RMS() float64 {
+	var sum float64
+	n := 0
+	for i := 0; i+1 < len(b); i += 2 {
+		s := int16(uint16(b[i]) | uint16(b[i+1])<<8)
+		sum += float64(s) * float64(s)
+		n++
+	}
+	if n == 0 {
+		return 0
+	}
+	return math.Sqrt(sum / float64(n))
+}
+
 // PeakAbs returns the peak absolute amplitude in the block (0..32768).
 // Used as a rough RX-level estimator for the capture-effect mixer.
 func (b Block) PeakAbs() int {

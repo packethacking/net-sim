@@ -206,7 +206,7 @@ Each demo prints its KISS port assignments at startup.
 ```yaml
 mixer_mode: fm_capture        # fm_capture (default) | linear_sum (stub)
 capture_db: 6.0               # FM capture ratio
-collision_mode: silence       # silence (default) | sum (stub) | noise (stub)
+collision_mode: silence       # silence (default) | noise (FM garble) | sum (stub)
 time_scale: 1.0               # run N x faster than wall clock (>= 1.0; see below)
 
 nodes:
@@ -429,11 +429,26 @@ for each rx block per receiving port:
   if len(active) >= 2:
     sort by RX level; margin = strongest − next
     if margin >= capture_db:  output strongest, attenuated  (capture)
-    else:                     collision garbage              (silence in v1)
+    else:                     collision garbage              (per collision_mode)
 ```
 
 This is what makes the `hidden-node` and `hidden-node-capture` demos do
 qualitatively different things from the same code.
+
+What "collision garbage" sounds like is selectable via `collision_mode`:
+
+- `silence` (default) — clean digital silence. Simple and backwards
+  compatible, but unrealistically *clean*: it hands receiving modems a
+  perfectly quiet channel at exactly the moment a real one would be full
+  of noise.
+- `noise` — gaussian garble at an RMS matching the strongest colliding
+  signal's post-loss level. A real FM discriminator outputs loud garble
+  (the heterodyne beat between the carriers plus wideband noise) when
+  two comparable carriers collide, at signal-comparable amplitude — so a
+  hot collision is loud garble, a weak distant one quiet garble. Use
+  this to exercise modem false-sync / DCD behaviour that the silence
+  model can't.
+- `sum` — accepted but still a stub (behaves as silence).
 
 ## Known limitations (samoyed-side, expected to be fixed upstream)
 
@@ -475,8 +490,9 @@ round-trip test lives in `internal/tnc/ackmode_test.go`.
 - BER / FER reporting beyond the basic frame counters demonstrable from
   KISS sniffing.
 - SSB modelling, AGC, pre/de-emphasis, multipath, Doppler, fading.
-- `linear_sum` / `sum` / `noise` mixer modes — accepted in the YAML, only
-  `fm_capture` + `silence` are functional in v1.
+- `linear_sum` / `sum` mixer modes — accepted in the YAML, only
+  `fm_capture` is functional (`collision_mode: silence` and `noise` both
+  work; `sum` is a stub).
 - Modem modes beyond what samoyed currently supports.
 
 ## Layout

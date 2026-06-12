@@ -138,9 +138,9 @@ const (
 type CollisionMode string
 
 const (
-	CollisionSilence CollisionMode = "silence" // v1 default
+	CollisionSilence CollisionMode = "silence" // default — clean digital silence
 	CollisionSum     CollisionMode = "sum"     // stub
-	CollisionNoise   CollisionMode = "noise"   // stub
+	CollisionNoise   CollisionMode = "noise"   // gaussian garble at the strongest signal's level
 )
 
 // Config is the whole topology file.
