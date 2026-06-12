@@ -222,6 +222,55 @@ links: []
 	}
 }
 
+func TestSquelchOpenMSAccepted(t *testing.T) {
+	yaml := `
+nodes:
+  - id: a
+    ports:
+      - id: vhf
+        modem: { mode: afsk1200 }
+        kiss_port: 8001
+  - id: b
+    ports:
+      - id: vhf
+        modem: { mode: afsk1200 }
+        kiss_port: 8002
+links:
+  - { from: a.vhf, to: b.vhf, loss_db: 0, squelch_open_ms: 50 }
+`
+	cfg, err := Parse(strings.NewReader(yaml))
+	if err != nil {
+		t.Fatalf("expected ok, got %v", err)
+	}
+	if cfg.Links[0].SquelchOpenMS != 50 {
+		t.Errorf("squelch_open_ms = %g, want 50", cfg.Links[0].SquelchOpenMS)
+	}
+}
+
+func TestSquelchOpenMSRange(t *testing.T) {
+	for _, v := range []string{"-1", "501"} {
+		yaml := `
+nodes:
+  - id: a
+    ports:
+      - id: vhf
+        modem: { mode: afsk1200 }
+        kiss_port: 8001
+  - id: b
+    ports:
+      - id: vhf
+        modem: { mode: afsk1200 }
+        kiss_port: 8002
+links:
+  - { from: a.vhf, to: b.vhf, loss_db: 0, squelch_open_ms: ` + v + ` }
+`
+		_, err := Parse(strings.NewReader(yaml))
+		if err == nil || !strings.Contains(err.Error(), "squelch_open_ms") {
+			t.Fatalf("squelch_open_ms=%s: expected range error, got %v", v, err)
+		}
+	}
+}
+
 func TestSelfLoopRejected(t *testing.T) {
 	yaml := `
 nodes:

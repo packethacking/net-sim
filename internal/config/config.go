@@ -123,6 +123,15 @@ type Link struct {
 	// NoiseDB is the white-noise floor on this link, expressed as dB
 	// below full-scale (positive = quieter; 0 = no noise). Phase 4.
 	NoiseDB float64 `yaml:"noise_db,omitempty"`
+
+	// SquelchOpenMS mutes the first N milliseconds of every transmission
+	// as heard via this link, modelling the receiving radio's squelch /
+	// carrier-detect opening delay (tens of ms on real FM gear, plus
+	// discriminator settle). This is exactly the on-air reason KISS
+	// TXDELAY exists; without it a tiny TXDELAY looks fine in simulation
+	// when it wouldn't be on air. 0 (the default) = squelch opens
+	// instantly — previous behaviour. Valid range 0..500.
+	SquelchOpenMS float64 `yaml:"squelch_open_ms,omitempty"`
 }
 
 // MixerMode selects the receiver-side mixing model.
@@ -332,6 +341,9 @@ func (c *Config) Validate() error {
 		}
 		if l.LossDB < 0 {
 			return fmt.Errorf("config: link %s -> %s: loss_db must be >= 0", fromRef, toRef)
+		}
+		if l.SquelchOpenMS < 0 || l.SquelchOpenMS > 500 {
+			return fmt.Errorf("config: link %s -> %s: squelch_open_ms must be in 0..500, got %g", fromRef, toRef, l.SquelchOpenMS)
 		}
 		key := fromRef.String() + "->" + toRef.String()
 		if seenLink[key] {

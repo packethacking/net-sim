@@ -64,7 +64,7 @@ func runRxFeederSequence(t *testing.T, timeScale float64, nBlocks int) []byte {
 	t.Helper()
 	src := config.PortRef{NodeID: "a", PortID: "vhf"}
 	dst := config.PortRef{NodeID: "b", PortID: "vhf"}
-	q := newLinkQueue(src, dst, 0, 0)
+	q := newLinkQueue(src, dst, 0, 0, 0, txSilenceWindow)
 
 	r := &Router{
 		cfg:     &config.Config{TimeScale: timeScale},

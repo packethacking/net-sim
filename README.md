@@ -227,8 +227,17 @@ nodes:
 links:
   # Directional. Both endpoints must use compatible modem configs.
   - { from: a.vhf, to: b.vhf, loss_db: 0 }
-  - { from: b.vhf, to: a.vhf, loss_db: 0 }
+  - { from: b.vhf, to: a.vhf, loss_db: 0, squelch_open_ms: 50 }
 ```
+
+Per-link `squelch_open_ms` (optional, `0..500`, default `0`) models the
+receiving radio's squelch / carrier-detect opening delay: the first N ms
+of every transmission heard via that link are delivered as silence (the
+carrier is still on the air for capture/collision purposes — only the
+audio is muted while the squelch opens). Real FM receivers take tens of
+milliseconds to open squelch and settle the discriminator, which is
+exactly why KISS TXDELAY exists; with the default `0` a tiny TXDELAY
+looks fine in simulation when it wouldn't be on air.
 
 Strict parsing: any unknown key inside a `modem:` block (e.g. `baud_rate`
 when you meant `baud`) is an error at startup, not a silent default.

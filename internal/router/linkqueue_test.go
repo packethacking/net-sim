@@ -18,7 +18,7 @@ func TestLinkQueueDeliversLongBurstGapFree(t *testing.T) {
 	q := newLinkQueue(
 		config.PortRef{NodeID: "a", PortID: "vhf"},
 		config.PortRef{NodeID: "b", PortID: "vhf"},
-		0, 0,
+		0, 0, 0, txSilenceWindow,
 	)
 
 	// ~10 s of audio — well past the old 3 s cap that used to drop.

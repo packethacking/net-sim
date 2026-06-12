@@ -31,6 +31,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math"
 	"net"
 	"sync"
 	"sync/atomic"
@@ -180,6 +181,16 @@ type txTracker struct {
 // real keyup is at most a few seconds.
 const maxQueueBlocks = 60 * audio.SampleRate / audio.BlockSamples
 
+// queuedBlock is one FIFO entry: the PCM block plus a start-of-transmission
+// marker set by push when the block began a new keyup (see push for how the
+// boundary is detected). Carrying the boundary on the block itself keeps the
+// pop side timing-independent: the squelch mute is counted in blocks of the
+// transmission, not in wall clock.
+type queuedBlock struct {
+	blk audio.Block
+	sot bool // start of transmission
+}
+
 // linkQueue is one source→destination link's audio buffer: a non-dropping FIFO
 // of PCM blocks the source has transmitted, drained by the destination's
 // rxFeeder at the channel sample rate (so the receiver hears the carrier in
@@ -194,17 +205,48 @@ const maxQueueBlocks = 60 * audio.SampleRate / audio.BlockSamples
 // channel. Memory is bounded in practice (a keyup is finite; the backing array
 // is released once drained); only a pathological runaway past maxQueueBlocks
 // ever drops.
+//
+// The linkQueue is also where the squelch_open_ms model lives — it is the
+// per-directed-link seam the squelch belongs to (squelch is a property of the
+// destination receiver hearing this particular carrier): pop substitutes
+// silence for the first squelchBlocks blocks of every transmission.
 type linkQueue struct {
 	src, dst config.PortRef
 	loss     float64
 	noise    float64
 
-	mu  sync.Mutex
-	buf []audio.Block // FIFO; index 0 = oldest
+	// squelchBlocks is the number of leading blocks of every transmission
+	// delivered as silence (squelch_open_ms rounded up to whole blocks).
+	// Counted in blocks — i.e. in sim-time audio — so the muted span is
+	// the same amount of *audio* regardless of time_scale. 0 = squelch
+	// opens instantly (default; pop is then byte-transparent).
+	squelchBlocks int
+
+	// silenceWindow is the push-side wall-clock idle gap that separates
+	// two transmissions. It mirrors the txWatchdog's rule exactly (the
+	// time-scaled txSilenceWindow): the source TNC bursts a keyup faster
+	// than real time but pauses between *frames inside one keyup* show up
+	// as short gaps on its TX stream, and the watchdog already answers
+	// "is this still the same transmission?" with this window. Reusing it
+	// here — rather than, say, a pop-side "queue drained" test, which
+	// would misfire whenever the rxFeeder catches up with a still-keyed
+	// source — keeps the two transmission-boundary definitions identical.
+	silenceWindow time.Duration
+	now           func() time.Time // stubbed by tests
+
+	mu            sync.Mutex
+	buf           []queuedBlock // FIFO; index 0 = oldest
+	lastPush      time.Time
+	muteRemaining int // blocks of the current transmission still to mute
 }
 
-func newLinkQueue(src, dst config.PortRef, loss, noise float64) *linkQueue {
-	return &linkQueue{src: src, dst: dst, loss: loss, noise: noise}
+func newLinkQueue(src, dst config.PortRef, loss, noise float64, squelchBlocks int, silenceWindow time.Duration) *linkQueue {
+	return &linkQueue{
+		src: src, dst: dst, loss: loss, noise: noise,
+		squelchBlocks: squelchBlocks,
+		silenceWindow: silenceWindow,
+		now:           time.Now,
+	}
 }
 
 // push appends a block to the link's buffer. It never blocks and — modelling a
@@ -212,31 +254,62 @@ func newLinkQueue(src, dst config.PortRef, loss, noise float64) *linkQueue {
 // source TNC has run ahead of real time. The only drop is the maxQueueBlocks
 // safety valve, which signals a stalled rxFeeder rather than normal operation,
 // so it is logged.
+//
+// The block is tagged start-of-transmission when it is the first push after a
+// silenceWindow-sized idle gap (the same idle→active transition the txTracker
+// uses) — that tag is what re-arms the squelch mute on the pop side.
 func (q *linkQueue) push(blk audio.Block, logger *slog.Logger) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
+	now := q.now()
+	sot := q.lastPush.IsZero() || now.Sub(q.lastPush) >= q.silenceWindow
+	q.lastPush = now
 	if len(q.buf) >= maxQueueBlocks {
-		q.buf[0] = nil
+		q.buf[0] = queuedBlock{}
 		q.buf = q.buf[1:]
 		logger.Warn("audio queue safety cap reached (rxFeeder stalled?)", "from", q.src, "to", q.dst)
 	}
-	q.buf = append(q.buf, blk)
+	q.buf = append(q.buf, queuedBlock{blk: blk, sot: sot})
 }
 
 // pop returns one block if immediately available (FIFO, oldest first).
+//
+// While the squelch is opening (the first squelchBlocks blocks of each
+// transmission), pop delivers silence INSTEAD OF the block — not nothing:
+// the carrier is on the air and the mixer must still see it for capture /
+// collision decisions; it is only the receiver's audio that stays muted
+// until the squelch opens. The original block is never modified (it is
+// shared with every other link the source fans out to).
 func (q *linkQueue) pop() (audio.Block, bool) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	if len(q.buf) == 0 {
 		return nil, false
 	}
-	blk := q.buf[0]
-	q.buf[0] = nil // release the reference
+	qb := q.buf[0]
+	q.buf[0] = queuedBlock{} // release the reference
 	q.buf = q.buf[1:]
 	if len(q.buf) == 0 {
 		q.buf = nil // release the backing array once drained
 	}
-	return blk, true
+	if qb.sot {
+		q.muteRemaining = q.squelchBlocks
+	}
+	if q.muteRemaining > 0 {
+		q.muteRemaining--
+		return audio.Silence(), true
+	}
+	return qb.blk, true
+}
+
+// squelchBlocksFor converts a link's squelch_open_ms into a whole number of
+// audio blocks, rounding up so a configured delay is never under-delivered.
+func squelchBlocksFor(ms float64) int {
+	if ms <= 0 {
+		return 0
+	}
+	const blockMS = float64(audio.BlockSamples) * 1000 / audio.SampleRate
+	return int(math.Ceil(ms / blockMS))
 }
 
 // Start spawns all samoyed children and begins routing audio.
@@ -272,7 +345,11 @@ func Start(ctx context.Context, cfg *config.Config, opts Options) (*Router, erro
 	for _, l := range cfg.Links {
 		fr, _ := parsePortRef(l.From)
 		to, _ := parsePortRef(l.To)
-		q := newLinkQueue(fr, to, l.LossDB, l.NoiseDB)
+		// The transmission-boundary window scales with time_scale just
+		// like the txWatchdog's: at scale N the audio (and its gaps)
+		// arrives N× faster.
+		q := newLinkQueue(fr, to, l.LossDB, l.NoiseDB,
+			squelchBlocksFor(l.SquelchOpenMS), scaled(txSilenceWindow, cfg.TimeScale))
 		r.linkQueues[fr] = append(r.linkQueues[fr], q)
 		r.rxLinks[to] = append(r.rxLinks[to], q)
 	}
