@@ -48,9 +48,9 @@ jobs:
       # samoyed source (SAMOYED_REPO + SAMOYED_REF) is pinned to a fixed commit
       # in the Dockerfile, so we no longer resolve a floating main HEAD here.
       # A fixed SHA gives a stable layer cache key and reproducible release
-      # images. The pin is currently the ACKMODE fork branch
-      # (M0LTE/samoyed @ 6b4f5c7) pending doismellburning/samoyed#528 — see the
-      # Dockerfile comment for the revert-to-upstream instructions. To rebuild
+      # images. The pin is currently the ACKMODE single commit on the fork's
+      # main (M0LTE/samoyed @ 61bb965) pending doismellburning/samoyed#528 — see
+      # the Dockerfile comment for the revert-to-upstream instructions. To rebuild
       # against a different samoyed, override the build-args there or here.
       - name: Build and push
         uses: docker/build-push-action@v7

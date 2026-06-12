@@ -31,13 +31,13 @@ FROM golang:1.25-bookworm AS builder
 # path (local `docker build`, install.sh, CI) gets the same samoyed.
 #
 # TEMPORARY PIN: KISS ACKMODE is not yet in doismellburning/samoyed; it lives
-# on the fork branch below (M0LTE/samoyed feat/ackmode). When ACKMODE lands in
-# doismellburning/samoyed, revert SAMOYED_REPO to
-# https://github.com/doismellburning/samoyed.git and set SAMOYED_REF back to
-# `main` (or that commit). Pinned to a fixed SHA so release images are
-# reproducible rather than tracking a floating branch.
+# as a single additive commit on the fork's main (M0LTE/samoyed @ 61bb965,
+# upstream main + ACKMODE). When ACKMODE lands in doismellburning/samoyed,
+# revert SAMOYED_REPO to https://github.com/doismellburning/samoyed.git and set
+# SAMOYED_REF back to `main` (or that commit). Pinned to a fixed SHA so release
+# images are reproducible rather than tracking a floating branch.
 ARG SAMOYED_REPO=https://github.com/M0LTE/samoyed.git
-ARG SAMOYED_REF=7fdd617fe4acbb67d746b756086db49c716def84
+ARG SAMOYED_REF=61bb965747c5fce1b7aeb05acb5a43b23911375b
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
         git make pkg-config gcc libc6-dev \
