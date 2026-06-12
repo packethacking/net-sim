@@ -101,14 +101,48 @@ func (m *Mixer) Mix(active []ActiveTX) (Block, MixDecision) {
 	return m.collision(sorted), MixCollision
 }
 
-func (m *Mixer) collision(_ []ActiveTX) Block {
+// collision renders the receiver's output when 2+ signals land inside the
+// capture margin and none of them takes the demodulator. sorted is the
+// active set ordered strongest-first (by receiver-side Level).
+func (m *Mixer) collision(sorted []ActiveTX) Block {
 	switch m.CollisionMode {
-	case "sum", "noise":
-		// stubs only — silence is the simplest defensible model and the
-		// only branch v1 needs working
+	case "noise":
+		// FM capture below threshold does NOT yield silence: with two
+		// comparable carriers on channel, the discriminator output is
+		// loud garble — the heterodyne beat between the carriers plus
+		// wideband noise — at an amplitude comparable to the signals
+		// themselves. Pure digital silence is unrealistically clean: it
+		// gives receiving modems a perfectly quiet channel exactly when
+		// a real one would be hammering their DCD and false-sync
+		// behaviour. Model the garble as gaussian noise with RMS equal
+		// to the strongest signal's post-loss level, so a hot collision
+		// is loud garble and a weak distant one is quiet garble.
+		return m.noiseBlock(sorted[0].Block.RMS() * AmplitudeFromDB(sorted[0].LossDB))
+	case "sum":
+		// stub — behaves as silence until the SSB path needs it
 		return Silence()
 	}
+	// "silence" (the default): the v1 model, kept for backwards
+	// compatibility.
 	return Silence()
+}
+
+// noiseBlock returns a fresh block of gaussian noise with the given RMS
+// amplitude (sigma, in sample units, 0..32767). Routed through AddNoise so
+// the RNG locking and int16 clamping live in one place.
+func (m *Mixer) noiseBlock(sigma float64) Block {
+	b := Silence()
+	if sigma <= 0 {
+		return b
+	}
+	// AddNoise expresses level as positive dB below full-scale; convert,
+	// clamping at "full-scale garble" for sigma at/above full-scale.
+	noiseDB := 20 * math.Log10(float64(math.MaxInt16)/sigma)
+	if noiseDB <= 0 {
+		noiseDB = 0.01
+	}
+	m.AddNoise(b, noiseDB)
+	return b
 }
 
 func (m *Mixer) linearSum(active []ActiveTX) Block {

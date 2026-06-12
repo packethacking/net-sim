@@ -89,6 +89,30 @@ expected steady state right after startup. Override (`docker run ...
 ghcr.io/.../net-sim:main` with extra args) if you'd rather drive
 Start/Stop manually from your test harness via `POST /api/start`.
 
+### Smoother audio under host load (`-rt-priority`)
+
+The router paces audio with 10 ms tickers and every TNC child runs a
+software demodulator; on a busy shared host, scheduler jitter glitches
+both (lost ticks → choppy RX audio → decode failures that look like RF
+problems). `sim-router -rt-priority` renices the router *and* each
+spawned TNC child to `-10`. Deliberately plain niceness, not
+`SCHED_FIFO` — a real-time policy could starve the host; niceness is
+enough to keep the tickers honest. It's best-effort: without
+`CAP_SYS_NICE` you get a one-line warning and the simulation carries on
+at normal priority.
+
+Granting the capability in Docker (`--cap-add SYS_NICE`), or in compose:
+
+```yaml
+services:
+  net-sim:
+    image: ghcr.io/packethacking/net-sim:main
+    cap_add: [SYS_NICE]
+```
+
+
+> **Nested-container hosts:** on a host that is itself an unprivileged container (e.g. Docker inside an unprivileged Proxmox LXC), the kernel checks CAP_SYS_NICE against the *init* user namespace, so negative nice is unavailable to anything inside — even container root. The flag then logs its one-line warning and the sim runs at normal priority; everything else is unaffected.
+
 ## Quick install (curl | sudo bash)
 
 On a fresh Debian 12 / Ubuntu 24.04+ host (LXC, VM, bare metal — anywhere
@@ -206,7 +230,8 @@ Each demo prints its KISS port assignments at startup.
 ```yaml
 mixer_mode: fm_capture        # fm_capture (default) | linear_sum (stub)
 capture_db: 6.0               # FM capture ratio
-collision_mode: silence       # silence (default) | sum (stub) | noise (stub)
+collision_mode: silence       # silence (default) | noise (FM garble) | sum (stub)
+time_scale: 1.0               # run N x faster than wall clock (>= 1.0; see below)
 
 nodes:
   - id: a
@@ -226,11 +251,53 @@ nodes:
 links:
   # Directional. Both endpoints must use compatible modem configs.
   - { from: a.vhf, to: b.vhf, loss_db: 0 }
-  - { from: b.vhf, to: a.vhf, loss_db: 0 }
+  - { from: b.vhf, to: a.vhf, loss_db: 0, squelch_open_ms: 50 }
 ```
+
+Per-link `squelch_open_ms` (optional, `0..500`, default `0`) models the
+receiving radio's squelch / carrier-detect opening delay: the first N ms
+of every transmission heard via that link are delivered as silence (the
+carrier is still on the air for capture/collision purposes — only the
+audio is muted while the squelch opens). Real FM receivers take tens of
+milliseconds to open squelch and settle the discriminator, which is
+exactly why KISS TXDELAY exists; with the default `0` a tiny TXDELAY
+looks fine in simulation when it wouldn't be on air.
 
 Strict parsing: any unknown key inside a `modem:` block (e.g. `baud_rate`
 when you meant `baud`) is an error at startup, not a silent default.
+
+### time_scale — faster-than-real-time simulation
+
+> **TNC pacing does not scale (measured):** samoyed paces its transmissions in
+> wall-clock time (the real-airtime sleep before PTT release), so at
+> `time_scale > 1` the TNC transmits in real time while the channel runs N×
+> faster — TX throughput stays wall-clock-bound and ACKMODE echoes arrive N×
+> "late" relative to a host whose protocol timers are scaled to match. In
+> practice `time_scale` is currently only sound for receive-path/mixer
+> experiments; ACKMODE pacing or throughput measurements need `time_scale: 1`
+> until the TNC grows a matching speed factor (tracked upstream).
+
+`time_scale: N` (or the `-time-scale N` flag on `sim-router`, which
+overrides the config) runs the whole simulation N× faster than wall
+clock: the router divides every pacing interval by N — the 10 ms
+per-block RX ticker, the composite recorder's ticker, and the TX
+watchdog's tick and silence window (silence detection has to scale with
+the audio rate or `tx_end` events would fire mid-transmission). A 60 s
+exchange completes in 60/N wall-clock seconds; recordings still come out
+as normal 44.1 kHz files whose time axis is *sim* time.
+
+**Fidelity caveat — read before trusting numbers from a scaled run.**
+Only the router's clocks scale. The TNC child processes (samoyed /
+direwolf) still run their own wall-clock behaviours — CSMA persist and
+slottime waits, DCD hang times, any internal timeouts — which means at
+`time_scale: 4` a TNC's 100 ms slottime is effectively 400 ms of sim
+time. `time_scale > 1` is therefore an **accelerated-testing mode** (get
+through a long soak/protocol exchange quickly), *not* a calibrated CSMA
+/ channel-access simulation; for timing-sensitive contention studies run
+at `1.0`. Hosts driving the KISS ports must also scale their own
+protocol timers (T1/T2 etc.) by N, or their retries will fire N× too
+early in sim time. Large factors are also bounded by CPU: every TNC
+demodulator must keep up with N× real-time audio.
 
 ### TNC backend per port
 
@@ -404,11 +471,26 @@ for each rx block per receiving port:
   if len(active) >= 2:
     sort by RX level; margin = strongest − next
     if margin >= capture_db:  output strongest, attenuated  (capture)
-    else:                     collision garbage              (silence in v1)
+    else:                     collision garbage              (per collision_mode)
 ```
 
 This is what makes the `hidden-node` and `hidden-node-capture` demos do
 qualitatively different things from the same code.
+
+What "collision garbage" sounds like is selectable via `collision_mode`:
+
+- `silence` (default) — clean digital silence. Simple and backwards
+  compatible, but unrealistically *clean*: it hands receiving modems a
+  perfectly quiet channel at exactly the moment a real one would be full
+  of noise.
+- `noise` — gaussian garble at an RMS matching the strongest colliding
+  signal's post-loss level. A real FM discriminator outputs loud garble
+  (the heterodyne beat between the carriers plus wideband noise) when
+  two comparable carriers collide, at signal-comparable amplitude — so a
+  hot collision is loud garble, a weak distant one quiet garble. Use
+  this to exercise modem false-sync / DCD behaviour that the silence
+  model can't.
+- `sum` — accepted but still a stub (behaves as silence).
 
 ## Known limitations (samoyed-side, expected to be fixed upstream)
 
@@ -450,8 +532,9 @@ round-trip test lives in `internal/tnc/ackmode_test.go`.
 - BER / FER reporting beyond the basic frame counters demonstrable from
   KISS sniffing.
 - SSB modelling, AGC, pre/de-emphasis, multipath, Doppler, fading.
-- `linear_sum` / `sum` / `noise` mixer modes — accepted in the YAML, only
-  `fm_capture` + `silence` are functional in v1.
+- `linear_sum` / `sum` mixer modes — accepted in the YAML, only
+  `fm_capture` is functional (`collision_mode: silence` and `noise` both
+  work; `sum` is a stub).
 - Modem modes beyond what samoyed currently supports.
 
 ## Layout

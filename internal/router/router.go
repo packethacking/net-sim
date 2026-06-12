@@ -31,6 +31,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math"
 	"net"
 	"sync"
 	"sync/atomic"
@@ -55,7 +56,34 @@ const txActiveThreshold = 1500
 // would never advance after the last audible block. 200 ms is long
 // enough to bridge the inter-frame gaps inside a multi-frame burst
 // without falsely closing keying, short enough to mark "key up" cleanly.
+//
+// At time_scale > 1 the audio (and hence the inter-frame gaps) runs
+// proportionally faster, so the watchdog applies scaled(txSilenceWindow)
+// — an unscaled window would bridge real inter-transmission gaps and a
+// scaled audio stream would otherwise fire tx_end mid-transmission.
 const txSilenceWindow = 200 * time.Millisecond
+
+// txWatchdogTick is how often the watchdog re-checks staleness at
+// time_scale 1. Scaled down with time_scale so end-of-keying detection
+// keeps the same sim-time resolution.
+const txWatchdogTick = 50 * time.Millisecond
+
+// blockPeriod is the wall-clock duration of one audio block at
+// time_scale 1: BlockSamples / SampleRate = 10 ms. The rxFeeder and the
+// composite recorder pace themselves at scaled(blockPeriod).
+const blockPeriod = time.Duration(audio.BlockSamples) * time.Second / audio.SampleRate
+
+// scaled divides a real-time pacing interval by the simulation's
+// time_scale factor: at scale N the simulation runs N× faster than wall
+// clock, so every wall-clock interval the router waits on shrinks by N.
+// Scales <= 1 (including the zero value of an unvalidated config) leave
+// the duration untouched.
+func scaled(d time.Duration, timeScale float64) time.Duration {
+	if timeScale <= 1 {
+		return d
+	}
+	return time.Duration(float64(d) / timeScale)
+}
 
 // Options configures a Router. All paths default to "look up on $PATH".
 type Options struct {
@@ -93,6 +121,13 @@ type Options struct {
 	// from each TNC's stderr stream. Cheap; the parser only matches
 	// lines containing "[0L]" so the overhead on busy logs is low.
 	Observer *Observer
+
+	// RTPriority, if set, renices the router's own process and every
+	// spawned TNC child to rtNice (-10) so the 10 ms pacing tickers and
+	// the children's demodulators don't glitch under shared host load.
+	// Best-effort: needs CAP_SYS_NICE, otherwise a one-line warning is
+	// logged and the simulation runs at normal priority. See priority.go.
+	RTPriority bool
 }
 
 // Router is the running simulator.
@@ -153,6 +188,16 @@ type txTracker struct {
 // real keyup is at most a few seconds.
 const maxQueueBlocks = 60 * audio.SampleRate / audio.BlockSamples
 
+// queuedBlock is one FIFO entry: the PCM block plus a start-of-transmission
+// marker set by push when the block began a new keyup (see push for how the
+// boundary is detected). Carrying the boundary on the block itself keeps the
+// pop side timing-independent: the squelch mute is counted in blocks of the
+// transmission, not in wall clock.
+type queuedBlock struct {
+	blk audio.Block
+	sot bool // start of transmission
+}
+
 // linkQueue is one source→destination link's audio buffer: a non-dropping FIFO
 // of PCM blocks the source has transmitted, drained by the destination's
 // rxFeeder at the channel sample rate (so the receiver hears the carrier in
@@ -167,17 +212,48 @@ const maxQueueBlocks = 60 * audio.SampleRate / audio.BlockSamples
 // channel. Memory is bounded in practice (a keyup is finite; the backing array
 // is released once drained); only a pathological runaway past maxQueueBlocks
 // ever drops.
+//
+// The linkQueue is also where the squelch_open_ms model lives — it is the
+// per-directed-link seam the squelch belongs to (squelch is a property of the
+// destination receiver hearing this particular carrier): pop substitutes
+// silence for the first squelchBlocks blocks of every transmission.
 type linkQueue struct {
 	src, dst config.PortRef
 	loss     float64
 	noise    float64
 
-	mu  sync.Mutex
-	buf []audio.Block // FIFO; index 0 = oldest
+	// squelchBlocks is the number of leading blocks of every transmission
+	// delivered as silence (squelch_open_ms rounded up to whole blocks).
+	// Counted in blocks — i.e. in sim-time audio — so the muted span is
+	// the same amount of *audio* regardless of time_scale. 0 = squelch
+	// opens instantly (default; pop is then byte-transparent).
+	squelchBlocks int
+
+	// silenceWindow is the push-side wall-clock idle gap that separates
+	// two transmissions. It mirrors the txWatchdog's rule exactly (the
+	// time-scaled txSilenceWindow): the source TNC bursts a keyup faster
+	// than real time but pauses between *frames inside one keyup* show up
+	// as short gaps on its TX stream, and the watchdog already answers
+	// "is this still the same transmission?" with this window. Reusing it
+	// here — rather than, say, a pop-side "queue drained" test, which
+	// would misfire whenever the rxFeeder catches up with a still-keyed
+	// source — keeps the two transmission-boundary definitions identical.
+	silenceWindow time.Duration
+	now           func() time.Time // stubbed by tests
+
+	mu            sync.Mutex
+	buf           []queuedBlock // FIFO; index 0 = oldest
+	lastPush      time.Time
+	muteRemaining int // blocks of the current transmission still to mute
 }
 
-func newLinkQueue(src, dst config.PortRef, loss, noise float64) *linkQueue {
-	return &linkQueue{src: src, dst: dst, loss: loss, noise: noise}
+func newLinkQueue(src, dst config.PortRef, loss, noise float64, squelchBlocks int, silenceWindow time.Duration) *linkQueue {
+	return &linkQueue{
+		src: src, dst: dst, loss: loss, noise: noise,
+		squelchBlocks: squelchBlocks,
+		silenceWindow: silenceWindow,
+		now:           time.Now,
+	}
 }
 
 // push appends a block to the link's buffer. It never blocks and — modelling a
@@ -185,31 +261,62 @@ func newLinkQueue(src, dst config.PortRef, loss, noise float64) *linkQueue {
 // source TNC has run ahead of real time. The only drop is the maxQueueBlocks
 // safety valve, which signals a stalled rxFeeder rather than normal operation,
 // so it is logged.
+//
+// The block is tagged start-of-transmission when it is the first push after a
+// silenceWindow-sized idle gap (the same idle→active transition the txTracker
+// uses) — that tag is what re-arms the squelch mute on the pop side.
 func (q *linkQueue) push(blk audio.Block, logger *slog.Logger) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
+	now := q.now()
+	sot := q.lastPush.IsZero() || now.Sub(q.lastPush) >= q.silenceWindow
+	q.lastPush = now
 	if len(q.buf) >= maxQueueBlocks {
-		q.buf[0] = nil
+		q.buf[0] = queuedBlock{}
 		q.buf = q.buf[1:]
 		logger.Warn("audio queue safety cap reached (rxFeeder stalled?)", "from", q.src, "to", q.dst)
 	}
-	q.buf = append(q.buf, blk)
+	q.buf = append(q.buf, queuedBlock{blk: blk, sot: sot})
 }
 
 // pop returns one block if immediately available (FIFO, oldest first).
+//
+// While the squelch is opening (the first squelchBlocks blocks of each
+// transmission), pop delivers silence INSTEAD OF the block — not nothing:
+// the carrier is on the air and the mixer must still see it for capture /
+// collision decisions; it is only the receiver's audio that stays muted
+// until the squelch opens. The original block is never modified (it is
+// shared with every other link the source fans out to).
 func (q *linkQueue) pop() (audio.Block, bool) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	if len(q.buf) == 0 {
 		return nil, false
 	}
-	blk := q.buf[0]
-	q.buf[0] = nil // release the reference
+	qb := q.buf[0]
+	q.buf[0] = queuedBlock{} // release the reference
 	q.buf = q.buf[1:]
 	if len(q.buf) == 0 {
 		q.buf = nil // release the backing array once drained
 	}
-	return blk, true
+	if qb.sot {
+		q.muteRemaining = q.squelchBlocks
+	}
+	if q.muteRemaining > 0 {
+		q.muteRemaining--
+		return audio.Silence(), true
+	}
+	return qb.blk, true
+}
+
+// squelchBlocksFor converts a link's squelch_open_ms into a whole number of
+// audio blocks, rounding up so a configured delay is never under-delivered.
+func squelchBlocksFor(ms float64) int {
+	if ms <= 0 {
+		return 0
+	}
+	const blockMS = float64(audio.BlockSamples) * 1000 / audio.SampleRate
+	return int(math.Ceil(ms / blockMS))
 }
 
 // Start spawns all samoyed children and begins routing audio.
@@ -245,9 +352,18 @@ func Start(ctx context.Context, cfg *config.Config, opts Options) (*Router, erro
 	for _, l := range cfg.Links {
 		fr, _ := parsePortRef(l.From)
 		to, _ := parsePortRef(l.To)
-		q := newLinkQueue(fr, to, l.LossDB, l.NoiseDB)
+		// The transmission-boundary window scales with time_scale just
+		// like the txWatchdog's: at scale N the audio (and its gaps)
+		// arrives N× faster.
+		q := newLinkQueue(fr, to, l.LossDB, l.NoiseDB,
+			squelchBlocksFor(l.SquelchOpenMS), scaled(txSilenceWindow, cfg.TimeScale))
 		r.linkQueues[fr] = append(r.linkQueues[fr], q)
 		r.rxLinks[to] = append(r.rxLinks[to], q)
+	}
+
+	if opts.RTPriority {
+		// pid 0 = this process (the router and all its pacing tickers).
+		applyRTPriority(r.logger, "sim-router", 0)
 	}
 
 	udpPort := opts.StartingRxAudioPort
@@ -284,6 +400,9 @@ func Start(ctx context.Context, cfg *config.Config, opts Options) (*Router, erro
 				return nil, fmt.Errorf("start %s: %w", ref, err)
 			}
 			r.children[ref] = child
+			if opts.RTPriority {
+				applyRTPriority(r.logger, ref.String(), child.Pid())
+			}
 
 			fields := []any{
 				"node", n.ID, "port", p.ID, "tnc", string(backend),
@@ -511,8 +630,9 @@ func (r *Router) txWatchdog(ctx context.Context, ref config.PortRef) {
 	if tt == nil {
 		return
 	}
-	tick := time.NewTicker(50 * time.Millisecond)
+	tick := time.NewTicker(scaled(txWatchdogTick, r.cfg.TimeScale))
 	defer tick.Stop()
+	window := scaled(txSilenceWindow, r.cfg.TimeScale)
 	emitEnd := func() {
 		// Also fires once during shutdown for any port that was keyed at
 		// the moment ctx cancelled — visualiser then doesn't end with
@@ -536,22 +656,21 @@ func (r *Router) txWatchdog(ctx context.Context, ref config.PortRef) {
 			continue
 		}
 		last := tt.lastBusyNanos.Load()
-		if time.Since(time.Unix(0, last)) >= txSilenceWindow {
+		if time.Since(time.Unix(0, last)) >= window {
 			emitEnd()
 		}
 	}
 }
 
-// rxFeeder writes one audio block per BlockSamples / SampleRate seconds to
-// this port's samoyed stdin. The block is the mixer's verdict on every
+// rxFeeder writes one audio block per blockPeriod (divided by time_scale)
+// to this port's samoyed stdin. The block is the mixer's verdict on every
 // active TX reaching this port through the topology.
 //
 // "Active" simply means a block is available on that link's queue. Per
 // PLAN Phase 3 self-mute, a port never hears its own TX — that's enforced
 // by config validation rejecting self-loops, so it's a no-op here.
 func (r *Router) rxFeeder(ctx context.Context, dst config.PortRef, stdin io.Writer) {
-	period := time.Duration(audio.BlockSamples) * time.Second / audio.SampleRate
-	ticker := time.NewTicker(period)
+	ticker := time.NewTicker(scaled(blockPeriod, r.cfg.TimeScale))
 	defer ticker.Stop()
 
 	links := r.rxLinks[dst] // links *into* this destination

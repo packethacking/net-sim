@@ -88,6 +88,83 @@ func TestMixCollisionMarginAtThreshold(t *testing.T) {
 	}
 }
 
+func TestMixCollisionNoiseProducesGarble(t *testing.T) {
+	m := NewMixer(6, false, "noise")
+	a := mkBlock(20000)
+	b := mkBlock(20000)
+	// Both 6 dB down → margin = 0 < capture threshold → collision.
+	// Strongest post-loss RMS = 20000 × 10^(-6/20) ≈ 10024; the garble
+	// must come out at a comparable level, not silence and not full-scale.
+	out, dec := m.Mix([]ActiveTX{
+		{Block: a, LossDB: 6},
+		{Block: b, LossDB: 6},
+	})
+	if dec != MixCollision {
+		t.Fatalf("decision = %d, want MixCollision", dec)
+	}
+	if out.IsSilence() {
+		t.Fatal("noise-mode collision must not be silent")
+	}
+	got := out.RMS()
+	want := 20000 * AmplitudeFromDB(6)
+	if got < 0.7*want || got > 1.3*want {
+		t.Errorf("garble rms = %.0f, want within 30%% of strongest post-loss level %.0f", got, want)
+	}
+}
+
+func TestMixCollisionNoiseLevelTracksStrongest(t *testing.T) {
+	m := NewMixer(6, false, "noise")
+	a := mkBlock(20000)
+	b := mkBlock(20000)
+	// A distant collision (both 30 dB down) is QUIET garble.
+	out, dec := m.Mix([]ActiveTX{
+		{Block: a, LossDB: 30},
+		{Block: b, LossDB: 30},
+	})
+	if dec != MixCollision {
+		t.Fatalf("decision = %d, want MixCollision", dec)
+	}
+	got := out.RMS()
+	want := 20000 * AmplitudeFromDB(30) // ≈ 632
+	if got < 0.7*want || got > 1.3*want {
+		t.Errorf("weak-collision garble rms = %.0f, want within 30%% of %.0f", got, want)
+	}
+}
+
+// Capture (margin >= capture_db) must be byte-identical between noise
+// mode and the default — the noise model only changes what a *collision*
+// sounds like.
+func TestMixCaptureUnchangedInNoiseMode(t *testing.T) {
+	strong := mkBlock(20000)
+	weak := mkBlock(5000)
+	active := []ActiveTX{
+		{Block: weak, LossDB: 12},
+		{Block: strong, LossDB: 0},
+	}
+	noiseOut, noiseDec := NewMixer(6, false, "noise").Mix(active)
+	silenceOut, silenceDec := NewMixer(6, false, "silence").Mix(active)
+	if noiseDec != MixCapture || silenceDec != MixCapture {
+		t.Fatalf("decisions = %d / %d, want MixCapture for both", noiseDec, silenceDec)
+	}
+	if string(noiseOut) != string(silenceOut) {
+		t.Error("capture output differs between noise and silence collision modes")
+	}
+}
+
+// Single-source mixing must also be untouched by the collision mode.
+func TestMixSingleUnchangedInNoiseMode(t *testing.T) {
+	src := mkBlock(10000)
+	active := []ActiveTX{{Block: src, LossDB: 6}}
+	noiseOut, noiseDec := NewMixer(6, false, "noise").Mix(active)
+	silenceOut, silenceDec := NewMixer(6, false, "silence").Mix(active)
+	if noiseDec != MixSingle || silenceDec != MixSingle {
+		t.Fatalf("decisions = %d / %d, want MixSingle for both", noiseDec, silenceDec)
+	}
+	if string(noiseOut) != string(silenceOut) {
+		t.Error("single-source output differs between noise and silence collision modes")
+	}
+}
+
 func TestAmplitudeFromDB(t *testing.T) {
 	cases := []struct {
 		lossDB float64

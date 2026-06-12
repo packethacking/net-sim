@@ -123,6 +123,15 @@ type Link struct {
 	// NoiseDB is the white-noise floor on this link, expressed as dB
 	// below full-scale (positive = quieter; 0 = no noise). Phase 4.
 	NoiseDB float64 `yaml:"noise_db,omitempty"`
+
+	// SquelchOpenMS mutes the first N milliseconds of every transmission
+	// as heard via this link, modelling the receiving radio's squelch /
+	// carrier-detect opening delay (tens of ms on real FM gear, plus
+	// discriminator settle). This is exactly the on-air reason KISS
+	// TXDELAY exists; without it a tiny TXDELAY looks fine in simulation
+	// when it wouldn't be on air. 0 (the default) = squelch opens
+	// instantly — previous behaviour. Valid range 0..500.
+	SquelchOpenMS float64 `yaml:"squelch_open_ms,omitempty"`
 }
 
 // MixerMode selects the receiver-side mixing model.
@@ -138,9 +147,9 @@ const (
 type CollisionMode string
 
 const (
-	CollisionSilence CollisionMode = "silence" // v1 default
+	CollisionSilence CollisionMode = "silence" // default — clean digital silence
 	CollisionSum     CollisionMode = "sum"     // stub
-	CollisionNoise   CollisionMode = "noise"   // stub
+	CollisionNoise   CollisionMode = "noise"   // gaussian garble at the strongest signal's level
 )
 
 // Config is the whole topology file.
@@ -155,6 +164,21 @@ type Config struct {
 	// any real radio with the squelch open. Zero or negative = no
 	// global floor (back to the old per-link-only behaviour).
 	DefaultNoiseDB float64 `yaml:"default_noise_db,omitempty"`
+
+	// TimeScale runs the simulation N× faster than wall clock (default
+	// 1.0 = real time; values < 1.0 are rejected). The router divides
+	// every wall-clock pacing interval by this factor: the rxFeeder's
+	// block ticker, the composite recorder's ticker, and the TX
+	// watchdog's tick + silence window (silence detection must scale
+	// with the audio rate or tx_end fires mid-transmission).
+	//
+	// Fidelity caveat: only the *router's* clocks scale. The TNC child
+	// processes' own wall-clock behaviours — CSMA persist/slottime
+	// waits, any internal timeouts — do NOT scale, so time_scale > 1 is
+	// an accelerated-testing mode, not a calibrated CSMA simulation.
+	// Hosts driving the KISS ports must scale their own protocol timers
+	// (T1/T2) to match, or retries will fire N× early in sim time.
+	TimeScale float64 `yaml:"time_scale,omitempty"`
 
 	Nodes []Node `yaml:"nodes"`
 	Links []Link `yaml:"links"`
@@ -204,6 +228,9 @@ func (c *Config) applyDefaults() {
 	if c.CollisionMode == "" {
 		c.CollisionMode = CollisionSilence
 	}
+	if c.TimeScale == 0 {
+		c.TimeScale = 1.0
+	}
 }
 
 // PortRef is a (node, port) handle resolved from a "node.port" string.
@@ -232,6 +259,9 @@ func (c *Config) Validate() error {
 	}
 	if c.CaptureDB < 0 {
 		return fmt.Errorf("config: capture_db must be >= 0, got %g", c.CaptureDB)
+	}
+	if c.TimeScale < 1 {
+		return fmt.Errorf("config: time_scale must be >= 1.0, got %g (slower-than-real-time is not supported)", c.TimeScale)
 	}
 
 	// Build a lookup table and check ID uniqueness.
@@ -311,6 +341,9 @@ func (c *Config) Validate() error {
 		}
 		if l.LossDB < 0 {
 			return fmt.Errorf("config: link %s -> %s: loss_db must be >= 0", fromRef, toRef)
+		}
+		if l.SquelchOpenMS < 0 || l.SquelchOpenMS > 500 {
+			return fmt.Errorf("config: link %s -> %s: squelch_open_ms must be in 0..500, got %g", fromRef, toRef, l.SquelchOpenMS)
 		}
 		key := fromRef.String() + "->" + toRef.String()
 		if seenLink[key] {

@@ -37,7 +37,7 @@ FROM golang:1.25-bookworm AS builder
 # `main` (or that commit). Pinned to a fixed SHA so release images are
 # reproducible rather than tracking a floating branch.
 ARG SAMOYED_REPO=https://github.com/M0LTE/samoyed.git
-ARG SAMOYED_REF=6b4f5c7aef633041cb2e55ab063f29ff0bacbefa
+ARG SAMOYED_REF=7fdd617fe4acbb67d746b756086db49c716def84
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
         git make pkg-config gcc libc6-dev \
@@ -71,6 +71,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         libbsd0 libgps28 libasound2 libjack-jackd2-0 libpulse0 \
         direwolf \
         ca-certificates \
+        libcap2-bin \
     && rm -rf /var/lib/apt/lists/* /var/cache/apt/* /var/log/*
 
 # binaries
@@ -87,6 +88,17 @@ EXPOSE 8080 8001 8002
 
 # A non-root user for the running process.
 RUN useradd --system --no-create-home --shell /usr/sbin/nologin sim
+
+# -rt-priority renices the router and its TNC children, which needs
+# CAP_SYS_NICE — but the container runs as the non-root `sim` user, and
+# docker's --cap-add only populates the *bounding* set (a non-root process
+# doesn't inherit it). File capabilities on the binaries grant it to the
+# process directly; still inert unless the container ALSO gets
+# --cap-add SYS_NICE (file caps can't exceed the bounding set), and the
+# binaries only use it when -rt-priority is passed.
+RUN setcap cap_sys_nice+ep /usr/local/bin/sim-web \
+    && setcap cap_sys_nice+ep /usr/local/bin/sim-router
+
 USER sim
 
 ENTRYPOINT ["/usr/local/bin/sim-web", "-addr", ":8080", "-config", "/etc/sim/network.yaml"]
