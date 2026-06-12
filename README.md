@@ -110,6 +110,9 @@ services:
     cap_add: [SYS_NICE]
 ```
 
+
+> **Nested-container hosts:** on a host that is itself an unprivileged container (e.g. Docker inside an unprivileged Proxmox LXC), the kernel checks CAP_SYS_NICE against the *init* user namespace, so negative nice is unavailable to anything inside — even container root. The flag then logs its one-line warning and the sim runs at normal priority; everything else is unaffected.
+
 ## Quick install (curl | sudo bash)
 
 On a fresh Debian 12 / Ubuntu 24.04+ host (LXC, VM, bare metal — anywhere
