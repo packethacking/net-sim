@@ -36,6 +36,13 @@ type compositeRecorder struct {
 	logger   *slog.Logger
 	started  time.Time
 
+	// timeScale is the simulation's acceleration factor; the pacing
+	// ticker runs at scaled(blockPeriod, timeScale) so the composite
+	// stays sample-aligned with the (faster-than-wall-clock) sim
+	// timeline. The WAV itself is still a SampleRate file — its time
+	// axis is sim time, not wall-clock time.
+	timeScale float64
+
 	idx    map[config.PortRef]int // port → channel index
 	queues []chan audio.Block     // one per channel; single producer each
 	writer *audio.MultiWAVWriter
@@ -75,7 +82,7 @@ type CompositeStatus struct {
 	Err      string
 }
 
-func newCompositeRecorder(base string, channels []config.PortRef, logger *slog.Logger) (*compositeRecorder, error) {
+func newCompositeRecorder(base string, channels []config.PortRef, timeScale float64, logger *slog.Logger) (*compositeRecorder, error) {
 	if base == "" {
 		return nil, errors.New("composite: no record base dir configured")
 	}
@@ -101,15 +108,16 @@ func newCompositeRecorder(base string, channels []config.PortRef, logger *slog.L
 	}
 
 	cr := &compositeRecorder{
-		path:     path,
-		channels: append([]config.PortRef(nil), channels...),
-		logger:   logger,
-		started:  time.Now(),
-		idx:      idx,
-		queues:   make([]chan audio.Block, len(channels)),
-		writer:   w,
-		done:     make(chan struct{}),
-		stopped:  make(chan struct{}),
+		path:      path,
+		channels:  append([]config.PortRef(nil), channels...),
+		logger:    logger,
+		started:   time.Now(),
+		timeScale: timeScale,
+		idx:       idx,
+		queues:    make([]chan audio.Block, len(channels)),
+		writer:    w,
+		done:      make(chan struct{}),
+		stopped:   make(chan struct{}),
 	}
 	for i := range cr.queues {
 		cr.queues[i] = make(chan audio.Block, compositeQueueBlocks)
@@ -153,8 +161,7 @@ func (cr *compositeRecorder) feed(ref config.PortRef, blk audio.Block) {
 // and every channel stays sample-aligned.
 func (cr *compositeRecorder) run() {
 	defer close(cr.stopped)
-	period := time.Duration(audio.BlockSamples) * time.Second / audio.SampleRate
-	ticker := time.NewTicker(period)
+	ticker := time.NewTicker(scaled(blockPeriod, cr.timeScale))
 	defer ticker.Stop()
 	for {
 		select {
@@ -312,7 +319,7 @@ func (r *Router) StartCompositeRecording(ports []config.PortRef) (string, error)
 		}
 	}
 
-	cr, err := newCompositeRecorder(r.opts.RecordDir, ports, r.logger)
+	cr, err := newCompositeRecorder(r.opts.RecordDir, ports, r.cfg.TimeScale, r.logger)
 	if err != nil {
 		return "", err
 	}

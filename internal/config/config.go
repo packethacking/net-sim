@@ -156,6 +156,21 @@ type Config struct {
 	// global floor (back to the old per-link-only behaviour).
 	DefaultNoiseDB float64 `yaml:"default_noise_db,omitempty"`
 
+	// TimeScale runs the simulation N× faster than wall clock (default
+	// 1.0 = real time; values < 1.0 are rejected). The router divides
+	// every wall-clock pacing interval by this factor: the rxFeeder's
+	// block ticker, the composite recorder's ticker, and the TX
+	// watchdog's tick + silence window (silence detection must scale
+	// with the audio rate or tx_end fires mid-transmission).
+	//
+	// Fidelity caveat: only the *router's* clocks scale. The TNC child
+	// processes' own wall-clock behaviours — CSMA persist/slottime
+	// waits, any internal timeouts — do NOT scale, so time_scale > 1 is
+	// an accelerated-testing mode, not a calibrated CSMA simulation.
+	// Hosts driving the KISS ports must scale their own protocol timers
+	// (T1/T2) to match, or retries will fire N× early in sim time.
+	TimeScale float64 `yaml:"time_scale,omitempty"`
+
 	Nodes []Node `yaml:"nodes"`
 	Links []Link `yaml:"links"`
 }
@@ -204,6 +219,9 @@ func (c *Config) applyDefaults() {
 	if c.CollisionMode == "" {
 		c.CollisionMode = CollisionSilence
 	}
+	if c.TimeScale == 0 {
+		c.TimeScale = 1.0
+	}
 }
 
 // PortRef is a (node, port) handle resolved from a "node.port" string.
@@ -232,6 +250,9 @@ func (c *Config) Validate() error {
 	}
 	if c.CaptureDB < 0 {
 		return fmt.Errorf("config: capture_db must be >= 0, got %g", c.CaptureDB)
+	}
+	if c.TimeScale < 1 {
+		return fmt.Errorf("config: time_scale must be >= 1.0, got %g (slower-than-real-time is not supported)", c.TimeScale)
 	}
 
 	// Build a lookup table and check ID uniqueness.

@@ -164,6 +164,64 @@ links:
 	}
 }
 
+func TestTimeScaleDefaultsToRealTime(t *testing.T) {
+	yaml := `
+nodes:
+  - id: a
+    ports:
+      - id: vhf
+        modem: { mode: afsk1200 }
+        kiss_port: 8001
+links: []
+`
+	cfg, err := Parse(strings.NewReader(yaml))
+	if err != nil {
+		t.Fatalf("expected ok, got %v", err)
+	}
+	if cfg.TimeScale != 1.0 {
+		t.Errorf("time_scale default = %g, want 1.0", cfg.TimeScale)
+	}
+}
+
+func TestTimeScaleAccepted(t *testing.T) {
+	yaml := `
+time_scale: 8.0
+nodes:
+  - id: a
+    ports:
+      - id: vhf
+        modem: { mode: afsk1200 }
+        kiss_port: 8001
+links: []
+`
+	cfg, err := Parse(strings.NewReader(yaml))
+	if err != nil {
+		t.Fatalf("expected ok, got %v", err)
+	}
+	if cfg.TimeScale != 8.0 {
+		t.Errorf("time_scale = %g, want 8.0", cfg.TimeScale)
+	}
+}
+
+func TestTimeScaleRejectsSlowerThanRealTime(t *testing.T) {
+	for _, scale := range []string{"0.5", "-2"} {
+		yaml := `
+time_scale: ` + scale + `
+nodes:
+  - id: a
+    ports:
+      - id: vhf
+        modem: { mode: afsk1200 }
+        kiss_port: 8001
+links: []
+`
+		_, err := Parse(strings.NewReader(yaml))
+		if err == nil || !strings.Contains(err.Error(), "time_scale") {
+			t.Fatalf("time_scale=%s: expected time_scale error, got %v", scale, err)
+		}
+	}
+}
+
 func TestSelfLoopRejected(t *testing.T) {
 	yaml := `
 nodes:

@@ -55,7 +55,34 @@ const txActiveThreshold = 1500
 // would never advance after the last audible block. 200 ms is long
 // enough to bridge the inter-frame gaps inside a multi-frame burst
 // without falsely closing keying, short enough to mark "key up" cleanly.
+//
+// At time_scale > 1 the audio (and hence the inter-frame gaps) runs
+// proportionally faster, so the watchdog applies scaled(txSilenceWindow)
+// — an unscaled window would bridge real inter-transmission gaps and a
+// scaled audio stream would otherwise fire tx_end mid-transmission.
 const txSilenceWindow = 200 * time.Millisecond
+
+// txWatchdogTick is how often the watchdog re-checks staleness at
+// time_scale 1. Scaled down with time_scale so end-of-keying detection
+// keeps the same sim-time resolution.
+const txWatchdogTick = 50 * time.Millisecond
+
+// blockPeriod is the wall-clock duration of one audio block at
+// time_scale 1: BlockSamples / SampleRate = 10 ms. The rxFeeder and the
+// composite recorder pace themselves at scaled(blockPeriod).
+const blockPeriod = time.Duration(audio.BlockSamples) * time.Second / audio.SampleRate
+
+// scaled divides a real-time pacing interval by the simulation's
+// time_scale factor: at scale N the simulation runs N× faster than wall
+// clock, so every wall-clock interval the router waits on shrinks by N.
+// Scales <= 1 (including the zero value of an unvalidated config) leave
+// the duration untouched.
+func scaled(d time.Duration, timeScale float64) time.Duration {
+	if timeScale <= 1 {
+		return d
+	}
+	return time.Duration(float64(d) / timeScale)
+}
 
 // Options configures a Router. All paths default to "look up on $PATH".
 type Options struct {
@@ -511,8 +538,9 @@ func (r *Router) txWatchdog(ctx context.Context, ref config.PortRef) {
 	if tt == nil {
 		return
 	}
-	tick := time.NewTicker(50 * time.Millisecond)
+	tick := time.NewTicker(scaled(txWatchdogTick, r.cfg.TimeScale))
 	defer tick.Stop()
+	window := scaled(txSilenceWindow, r.cfg.TimeScale)
 	emitEnd := func() {
 		// Also fires once during shutdown for any port that was keyed at
 		// the moment ctx cancelled — visualiser then doesn't end with
@@ -536,22 +564,21 @@ func (r *Router) txWatchdog(ctx context.Context, ref config.PortRef) {
 			continue
 		}
 		last := tt.lastBusyNanos.Load()
-		if time.Since(time.Unix(0, last)) >= txSilenceWindow {
+		if time.Since(time.Unix(0, last)) >= window {
 			emitEnd()
 		}
 	}
 }
 
-// rxFeeder writes one audio block per BlockSamples / SampleRate seconds to
-// this port's samoyed stdin. The block is the mixer's verdict on every
+// rxFeeder writes one audio block per blockPeriod (divided by time_scale)
+// to this port's samoyed stdin. The block is the mixer's verdict on every
 // active TX reaching this port through the topology.
 //
 // "Active" simply means a block is available on that link's queue. Per
 // PLAN Phase 3 self-mute, a port never hears its own TX — that's enforced
 // by config validation rejecting self-loops, so it's a no-op here.
 func (r *Router) rxFeeder(ctx context.Context, dst config.PortRef, stdin io.Writer) {
-	period := time.Duration(audio.BlockSamples) * time.Second / audio.SampleRate
-	ticker := time.NewTicker(period)
+	ticker := time.NewTicker(scaled(blockPeriod, r.cfg.TimeScale))
 	defer ticker.Stop()
 
 	links := r.rxLinks[dst] // links *into* this destination

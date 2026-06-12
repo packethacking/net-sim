@@ -207,6 +207,7 @@ Each demo prints its KISS port assignments at startup.
 mixer_mode: fm_capture        # fm_capture (default) | linear_sum (stub)
 capture_db: 6.0               # FM capture ratio
 collision_mode: silence       # silence (default) | sum (stub) | noise (stub)
+time_scale: 1.0               # run N x faster than wall clock (>= 1.0; see below)
 
 nodes:
   - id: a
@@ -231,6 +232,30 @@ links:
 
 Strict parsing: any unknown key inside a `modem:` block (e.g. `baud_rate`
 when you meant `baud`) is an error at startup, not a silent default.
+
+### time_scale — faster-than-real-time simulation
+
+`time_scale: N` (or the `-time-scale N` flag on `sim-router`, which
+overrides the config) runs the whole simulation N× faster than wall
+clock: the router divides every pacing interval by N — the 10 ms
+per-block RX ticker, the composite recorder's ticker, and the TX
+watchdog's tick and silence window (silence detection has to scale with
+the audio rate or `tx_end` events would fire mid-transmission). A 60 s
+exchange completes in 60/N wall-clock seconds; recordings still come out
+as normal 44.1 kHz files whose time axis is *sim* time.
+
+**Fidelity caveat — read before trusting numbers from a scaled run.**
+Only the router's clocks scale. The TNC child processes (samoyed /
+direwolf) still run their own wall-clock behaviours — CSMA persist and
+slottime waits, DCD hang times, any internal timeouts — which means at
+`time_scale: 4` a TNC's 100 ms slottime is effectively 400 ms of sim
+time. `time_scale > 1` is therefore an **accelerated-testing mode** (get
+through a long soak/protocol exchange quickly), *not* a calibrated CSMA
+/ channel-access simulation; for timing-sensitive contention studies run
+at `1.0`. Hosts driving the KISS ports must also scale their own
+protocol timers (T1/T2 etc.) by N, or their retries will fire N× too
+early in sim time. Large factors are also bounded by CPU: every TNC
+demodulator must keep up with N× real-time audio.
 
 ### TNC backend per port
 
