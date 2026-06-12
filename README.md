@@ -89,6 +89,27 @@ expected steady state right after startup. Override (`docker run ...
 ghcr.io/.../net-sim:main` with extra args) if you'd rather drive
 Start/Stop manually from your test harness via `POST /api/start`.
 
+### Smoother audio under host load (`-rt-priority`)
+
+The router paces audio with 10 ms tickers and every TNC child runs a
+software demodulator; on a busy shared host, scheduler jitter glitches
+both (lost ticks → choppy RX audio → decode failures that look like RF
+problems). `sim-router -rt-priority` renices the router *and* each
+spawned TNC child to `-10`. Deliberately plain niceness, not
+`SCHED_FIFO` — a real-time policy could starve the host; niceness is
+enough to keep the tickers honest. It's best-effort: without
+`CAP_SYS_NICE` you get a one-line warning and the simulation carries on
+at normal priority.
+
+Granting the capability in Docker (`--cap-add SYS_NICE`), or in compose:
+
+```yaml
+services:
+  net-sim:
+    image: ghcr.io/packethacking/net-sim:main
+    cap_add: [SYS_NICE]
+```
+
 ## Quick install (curl | sudo bash)
 
 On a fresh Debian 12 / Ubuntu 24.04+ host (LXC, VM, bare metal — anywhere

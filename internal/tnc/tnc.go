@@ -90,6 +90,15 @@ func (c *Child) TXAudio() io.Reader { return c.txReader }
 // Spec returns the launch spec.
 func (c *Child) Spec() Spec { return c.spec }
 
+// Pid returns the child's OS process id, or 0 if it never started. Used
+// by the router's -rt-priority plumbing to renice spawned TNCs.
+func (c *Child) Pid() int {
+	if c.cmd != nil && c.cmd.Process != nil {
+		return c.cmd.Process.Pid
+	}
+	return 0
+}
+
 // Wait blocks until the child exits.
 func (c *Child) Wait() error { return <-c.exitC }
 

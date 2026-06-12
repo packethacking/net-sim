@@ -33,6 +33,7 @@ func main() {
 	recordDir := flag.String("record", "", "if set, record all per-port TX and RX audio to a timestamped subdirectory of this path")
 	composite := flag.String("composite", "", "comma-separated transmitter ports (e.g. a.vhf,b.vhf) to composite into one real-time, sample-aligned WAV (one TX per channel — stereo for two). Requires -record for the output dir")
 	timeScale := flag.Float64("time-scale", 0, "run the simulation N x faster than wall clock (>= 1.0; overrides the config's time_scale; see README for the fidelity caveat)")
+	rtPriority := flag.Bool("rt-priority", false, "renice sim-router and every TNC child to -10 for smoother audio pacing under host load (best-effort; needs CAP_SYS_NICE)")
 	flag.Parse()
 
 	if *cfgPath == "" {
@@ -109,6 +110,7 @@ func main() {
 		Logger:        logger,
 		RecordDir:     *recordDir,
 		RecordOnStart: *recordDir != "",
+		RTPriority:    *rtPriority,
 	})
 	if err != nil {
 		logger.Error("start router", "err", err)

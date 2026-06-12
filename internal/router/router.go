@@ -121,6 +121,13 @@ type Options struct {
 	// from each TNC's stderr stream. Cheap; the parser only matches
 	// lines containing "[0L]" so the overhead on busy logs is low.
 	Observer *Observer
+
+	// RTPriority, if set, renices the router's own process and every
+	// spawned TNC child to rtNice (-10) so the 10 ms pacing tickers and
+	// the children's demodulators don't glitch under shared host load.
+	// Best-effort: needs CAP_SYS_NICE, otherwise a one-line warning is
+	// logged and the simulation runs at normal priority. See priority.go.
+	RTPriority bool
 }
 
 // Router is the running simulator.
@@ -354,6 +361,11 @@ func Start(ctx context.Context, cfg *config.Config, opts Options) (*Router, erro
 		r.rxLinks[to] = append(r.rxLinks[to], q)
 	}
 
+	if opts.RTPriority {
+		// pid 0 = this process (the router and all its pacing tickers).
+		applyRTPriority(r.logger, "sim-router", 0)
+	}
+
 	udpPort := opts.StartingRxAudioPort
 	for _, n := range cfg.Nodes {
 		for _, p := range n.Ports {
@@ -388,6 +400,9 @@ func Start(ctx context.Context, cfg *config.Config, opts Options) (*Router, erro
 				return nil, fmt.Errorf("start %s: %w", ref, err)
 			}
 			r.children[ref] = child
+			if opts.RTPriority {
+				applyRTPriority(r.logger, ref.String(), child.Pid())
+			}
 
 			fields := []any{
 				"node", n.ID, "port", p.ID, "tnc", string(backend),
