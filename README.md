@@ -110,8 +110,9 @@ services:
     cap_add: [SYS_NICE]
 ```
 
+The capability is granted at **runtime** (`--cap-add` / `cap_add`), deliberately — the image carries no file capabilities on its binaries. (An earlier build set `cap_sys_nice+ep` on `sim-web`/`sim-router`; that made them refuse to `exec` with *"operation not permitted"* on any host whose bounding set lacks the cap — e.g. an unprivileged LXC — breaking the image even for runs that never pass `-rt-priority`. Runtime cap-add is the correct mechanism.)
 
-> **Nested-container hosts:** on a host that is itself an unprivileged container (e.g. Docker inside an unprivileged Proxmox LXC), the kernel checks CAP_SYS_NICE against the *init* user namespace, so negative nice is unavailable to anything inside — even container root. The flag then logs its one-line warning and the sim runs at normal priority; everything else is unaffected.
+> **Nested-container hosts:** on a host that is itself an unprivileged container (e.g. Docker inside an unprivileged Proxmox LXC), the kernel checks CAP_SYS_NICE against the *init* user namespace, so negative nice is unavailable to anything inside — even container root, even with `cap_add`. The flag then logs its one-line warning and the sim runs at normal priority; everything else is unaffected.
 
 ## Quick install (curl | sudo bash)
 

@@ -71,7 +71,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         libbsd0 libgps28 libasound2 libjack-jackd2-0 libpulse0 \
         direwolf \
         ca-certificates \
-        libcap2-bin \
     && rm -rf /var/lib/apt/lists/* /var/cache/apt/* /var/log/*
 
 # binaries
@@ -89,16 +88,15 @@ EXPOSE 8080 8001 8002
 # A non-root user for the running process.
 RUN useradd --system --no-create-home --shell /usr/sbin/nologin sim
 
-# -rt-priority renices the router and its TNC children, which needs
-# CAP_SYS_NICE — but the container runs as the non-root `sim` user, and
-# docker's --cap-add only populates the *bounding* set (a non-root process
-# doesn't inherit it). File capabilities on the binaries grant it to the
-# process directly; still inert unless the container ALSO gets
-# --cap-add SYS_NICE (file caps can't exceed the bounding set), and the
-# binaries only use it when -rt-priority is passed.
-RUN setcap cap_sys_nice+ep /usr/local/bin/sim-web \
-    && setcap cap_sys_nice+ep /usr/local/bin/sim-router
-
+# NOTE on -rt-priority: it renices the router + TNC children, which needs
+# CAP_SYS_NICE. Grant it at RUNTIME with `--cap-add SYS_NICE` (and run the
+# container as root, or with that cap in the user-namespace) — NOT with file
+# capabilities on the binaries. A `setcap cap_sys_nice+ep` here makes the
+# binary REFUSE TO exec (EPERM "operation not permitted") on any host whose
+# bounding set lacks the cap — e.g. an unprivileged LXC — breaking the image
+# for everyone who isn't using -rt-priority. -rt-priority already degrades
+# gracefully (logs a one-line warning and runs at normal priority) where the
+# platform won't grant the cap, so the binary must stay capability-free.
 USER sim
 
 ENTRYPOINT ["/usr/local/bin/sim-web", "-addr", ":8080", "-config", "/etc/sim/network.yaml"]
