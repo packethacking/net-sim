@@ -72,6 +72,7 @@ func main() {
 	workDir := flag.String("workdir", "", "scratch dir for per-port config files / FIFOs (default: temp)")
 	autostart := flag.Bool("autostart", false, "start the router immediately on launch")
 	recordDir := flag.String("record", "", "if set, enables the Record toggle and Composite recording panel in the UI; recordings land under this path")
+	rtPriority := flag.Bool("rt-priority", false, "renice the router and its TNC children for jitter-free pacing (needs CAP_SYS_NICE)")
 	flag.Parse()
 
 	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
@@ -97,6 +98,7 @@ func main() {
 		direwolfBin: direwolfBin,
 		workDir:     *workDir,
 		recordBase:  *recordDir,
+		rtPriority:  *rtPriority,
 		logger:      logger,
 		eventBus:    events.NewBus(),
 		audioTap:    audio.NewTap(),
@@ -179,6 +181,7 @@ type app struct {
 	direwolfBin string
 	workDir     string
 	recordBase  string // -record DIR; "" means feature disabled
+	rtPriority  bool   // -rt-priority: renice router + TNC children at start
 	logger      *slog.Logger
 	tmpl        *template.Template
 	mapTmpl     *template.Template
@@ -790,6 +793,7 @@ func (a *app) start() error {
 		EventBus:      a.eventBus,
 		AudioTap:      a.audioTap,
 		Observer:      a.observer,
+		RTPriority:    a.rtPriority,
 	})
 	if err != nil {
 		cancel()
