@@ -37,7 +37,7 @@ FROM golang:1.25-bookworm AS builder
 # `main` (or that commit). Pinned to a fixed SHA so release images are
 # reproducible rather than tracking a floating branch.
 ARG SAMOYED_REPO=https://github.com/M0LTE/samoyed.git
-ARG SAMOYED_REF=6b4f5c7aef633041cb2e55ab063f29ff0bacbefa
+ARG SAMOYED_REF=7dc1d7e53babe7e2652dbd10ddfef6904c7075f5
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
         git make pkg-config gcc libc6-dev \
